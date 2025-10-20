@@ -1,0 +1,15 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": ".venv/bin/python",
+        "[javascript]": {
+            "editor.formatOnSave": true,
+            // default formatter is prettier
+            "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+    }
+}
