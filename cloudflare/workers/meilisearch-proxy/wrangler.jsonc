@@ -14,7 +14,7 @@
 		"enabled": true
 	},
 	"vars": {
-		"MEILI_HOST": "http://qs0k4ws0co8g88804scwwwgo.46.224.10.193.sslip.io"
+		"MEILI_HOST": "http://wn4pfa3yv7pw07cpk9u5yu6t.46.224.10.193.sslip.io"
 	},
 	"routes": [
 		{
