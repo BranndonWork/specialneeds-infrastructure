@@ -43,3 +43,6 @@ logs/
 # Build
 dist/
 build/
+
+# Terraform (separate git repo)
+terraform/
