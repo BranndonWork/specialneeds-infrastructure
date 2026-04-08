@@ -1,0 +1,32 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "api-gateway",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-10-11",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"observability": {
+		"enabled": true
+	},
+	"routes": [
+		{
+			"pattern": "api.specialneeds.com/*",
+			"zone_name": "specialneeds.com"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "RATE_LIMIT_KV",
+			"id": "2fa5c74914584127bd79641d48b75a00"
+		},
+		{
+			"binding": "CACHE_KV",
+			"id": "9c21ddcb4d4b4577af54fd6e4f4148c8"
+		},
+		{
+			"binding": "CROWDSEC_KV",
+			"id": "dafa03953730440d90e18de7505241a0"
+		}
+	],
+}

@@ -1,0 +1,26 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "meilisearch-proxy-staging",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-10-23",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"MEILI_HOST": "http://yksc8okwcsg4scgssooc040g.46.224.10.193.sslip.io"
+	},
+	"routes": [
+		{
+			"pattern": "staging-search.specialneeds.com",
+			"custom_domain": true
+		}
+	]
+	// Note: Set MEILI_SEARCH_KEY as a secret with: wrangler secret put MEILI_SEARCH_KEY
+}

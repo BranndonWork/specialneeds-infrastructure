@@ -23,10 +23,7 @@ Cloudflare Worker that proxies Meilisearch search requests from the client to th
 - API key management at the edge
 - Rate limiting and caching
 
-### 2. devapi-specialneeds
-Development API worker for testing and staging environments.
-
-### 3. special-needs
+### 2. special-needs
 Main Cloudflare Worker for the SpecialNeeds.com platform.
 
 ## Deployment
