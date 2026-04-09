@@ -46,3 +46,4 @@ build/
 
 # Terraform (separate git repo)
 terraform/
+docs/
