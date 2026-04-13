@@ -2,12 +2,20 @@ import { cacheKey } from './cache';
 
 const CF_ZONE_ID = '3df33cbd8f514275c7074407989b5b12';
 const REVALIDATE_URL = 'https://www.specialneeds.com/api/admin/revalidate/';
+// www.specialneeds.com is Vercel-hosted and not Cloudflare-proxied.
+// Cloudflare CDN purge calls for this host are no-ops — skip them.
+const CF_PROXIED_HOST = 'api.specialneeds.com';
 
 function isAuthorized(request: Request, secret: string): boolean {
   return Boolean(secret && request.headers.get('X-Sn-Service-Token') === secret);
 }
 
 async function purgeCfCdn(targetUrl: string, cfApiToken: string): Promise<void> {
+  const host = new URL(targetUrl).hostname;
+  if (host !== CF_PROXIED_HOST) {
+    console.log(`[purge-cdn] skipped — ${host} is not Cloudflare-proxied`);
+    return;
+  }
   const res = await fetch(
     `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache`,
     {
@@ -34,6 +42,7 @@ async function revalidateNextJs(targetUrl: string, revalidateSecret: string): Pr
   });
   console.log(`[revalidate-isr] ${path} → ${res.status}`);
 }
+
 
 export async function handleKvEndpoint(
   request: Request,
@@ -67,11 +76,14 @@ export async function handleKvEndpoint(
       }
       case 'DELETE': {
         if (!isAuthorized(request, serviceToken)) return new Response('Forbidden', { status: 403 });
-        await Promise.all([
-          kv.delete(hash),
-          caches.default.delete(new Request(`https://cache.internal/${hash}`)),
-        ]);
-        if (cfApiToken) ctx.waitUntil(purgeCfCdn(targetUrl, cfApiToken));
+        const isApiUrl = new URL(targetUrl).hostname === CF_PROXIED_HOST;
+        if (isApiUrl) {
+          await Promise.all([
+            kv.delete(hash),
+            caches.default.delete(new Request(`https://cache.internal/${hash}`)),
+          ]);
+          if (cfApiToken) ctx.waitUntil(purgeCfCdn(targetUrl, cfApiToken));
+        }
         if (revalidateSecret) ctx.waitUntil(revalidateNextJs(targetUrl, revalidateSecret));
         return new Response('OK');
       }
