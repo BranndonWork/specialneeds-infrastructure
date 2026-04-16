@@ -5,6 +5,12 @@ export default defineWorkersConfig({
 		poolOptions: {
 			workers: {
 				wrangler: { configPath: './wrangler.jsonc' },
+				miniflare: {
+					bindings: {
+						MEILI_SEARCH_KEY: 'test-search-key',
+						MEILISEARCH_STATUS_BYPASS_KEY: 'test-bypass-secret',
+					},
+				},
 			},
 		},
 	},
