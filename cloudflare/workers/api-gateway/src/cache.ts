@@ -45,7 +45,15 @@ export async function checkCache(
   const t1 = Date.now();
   const l1 = await caches.default.match(cacheRequest);
   console.log(`[cache:l1] ${l1 ? 'HIT' : 'MISS'} ${Date.now() - t1}ms`);
-  if (l1) return withHeader(l1, 'X-Cache', 'HIT');
+  if (l1) {
+    const kvCheck = await cacheKv.get(key);
+    if (kvCheck !== null) {
+      return withHeader(l1, 'X-Cache', 'HIT');
+    }
+    // KV was invalidated — L1 is stale, evict it and fall through
+    console.log(`[cache:l1-stale] KV invalidated, evicting L1`);
+    ctx.waitUntil(caches.default.delete(cacheRequest));
+  }
 
   // L2 — KV (global, stale fallback)
   const t2 = Date.now();

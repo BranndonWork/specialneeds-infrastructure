@@ -30,17 +30,36 @@ async function purgeCfCdn(targetUrl: string, cfApiToken: string): Promise<void> 
   console.log(`[purge-cdn] ${targetUrl} → ${res.status}`);
 }
 
-async function revalidateNextJs(targetUrl: string, revalidateSecret: string): Promise<void> {
-  const path = new URL(targetUrl).pathname;
+function apiPathToFrontendPaths(apiPath: string): string[] {
+  const listingMatch = apiPath.match(/^\/api\/v1\/listings\/display\/(.+?)\/$/);
+  if (listingMatch) return [`/directory/${listingMatch[1]}`, '/'];
+
+  const articleMatch = apiPath.match(/^\/api\/v1\/articles\/display\/(.+?)\/$/);
+  if (articleMatch) return [`/articles/${articleMatch[1]}`];
+
+  return [];
+}
+
+async function revalidateNextJs(targetUrl: string, revalidateSecret: string, snServiceToken: string): Promise<void> {
+  const paths = apiPathToFrontendPaths(new URL(targetUrl).pathname);
+  if (paths.length === 0) {
+    console.log(`[revalidate-isr] skipped — no frontend mapping for ${new URL(targetUrl).pathname}`);
+    return;
+  }
   const res = await fetch(REVALIDATE_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Revalidate-Token': revalidateSecret,
+      'x-sn-service-token': snServiceToken,
     },
-    body: JSON.stringify({ paths: [path] }),
+    body: JSON.stringify({ paths }),
   });
-  console.log(`[revalidate-isr] ${path} → ${res.status}`);
+  if (!res.ok) {
+    console.error(`[revalidate-isr] FAILED ${paths} → ${res.status}`);
+    throw new Error(`ISR revalidation failed: ${res.status}`);
+  }
+  console.log(`[revalidate-isr] ${paths} → ${res.status}`);
 }
 
 
@@ -51,6 +70,7 @@ export async function handleKvEndpoint(
   ctx: ExecutionContext,
   cfApiToken: string,
   revalidateSecret: string,
+  snServiceToken: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
 
@@ -84,7 +104,7 @@ export async function handleKvEndpoint(
           ]);
           if (cfApiToken) ctx.waitUntil(purgeCfCdn(targetUrl, cfApiToken));
         }
-        if (revalidateSecret) ctx.waitUntil(revalidateNextJs(targetUrl, revalidateSecret));
+        if (revalidateSecret) ctx.waitUntil(revalidateNextJs(targetUrl, revalidateSecret, snServiceToken));
         return new Response('OK');
       }
       default:

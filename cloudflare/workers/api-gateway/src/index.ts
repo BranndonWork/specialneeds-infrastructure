@@ -11,6 +11,7 @@ export interface Env {
   WORKER_ORIGIN_SECRET: string;
   CF_API_TOKEN: string;
   REVALIDATE_SECRET: string;
+  SN_SERVICE_TOKEN: string;
 }
 
 async function proxyToOrigin(request: Request, originUrl: string, originSecret: string): Promise<Response> {
@@ -59,7 +60,7 @@ export default {
     }
 
     const t1 = Date.now();
-    const kvResponse = await handleKvEndpoint(request, env.CACHE_KV, env.CACHE_MGMT_TOKEN, ctx, env.CF_API_TOKEN, env.REVALIDATE_SECRET);
+    const kvResponse = await handleKvEndpoint(request, env.CACHE_KV, env.CACHE_MGMT_TOKEN, ctx, env.CF_API_TOKEN, env.REVALIDATE_SECRET, env.SN_SERVICE_TOKEN);
     if (kvResponse) {
       console.log(`[kv-endpoint] handled ${Date.now() - t1}ms`);
       const headers = new Headers(kvResponse.headers);
