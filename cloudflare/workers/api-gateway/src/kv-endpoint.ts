@@ -76,6 +76,29 @@ export async function handleKvEndpoint(
 
   if (!url.pathname.startsWith('/v1/cache')) return null;
 
+  // Prefix listing — GET /v1/cache?prefix=<prefix>
+  // Returns { keys: [{ name, value }] }. Always requires service-token auth.
+  if (url.pathname === '/v1/cache' && url.searchParams.has('prefix') && request.method === 'GET') {
+    if (!isAuthorized(request, serviceToken)) return new Response('Forbidden', { status: 403 });
+    const prefixParam = url.searchParams.get('prefix')!;
+    const kvPrefix = prefixParam.replace(/\/$/, '').replace(/\//g, ':') + ':';
+    const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '1000', 10) || 1000, 1000);
+    const includeValues = url.searchParams.get('include_values') !== 'false';
+
+    const listed = await kv.list({ prefix: kvPrefix, limit });
+    const entries = includeValues
+      ? await Promise.all(
+          listed.keys.map(async (k) => ({ name: k.name, value: await kv.get(k.name) })),
+        )
+      : listed.keys.map((k) => ({ name: k.name }));
+
+    const cursor = listed.list_complete ? null : listed.cursor;
+    return new Response(
+      JSON.stringify({ keys: entries, list_complete: listed.list_complete, cursor }),
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
   // Cache management — HEAD|PUT|DELETE /v1/cache?url=<encoded-url>
   if (url.pathname === '/v1/cache' && url.searchParams.has('url')) {
     const targetUrl = url.searchParams.get('url')!;
@@ -118,8 +141,13 @@ export async function handleKvEndpoint(
   const kvKey = url.pathname.replace(/^\/v1\/cache\//, '').replace(/\//g, ':');
   if (!kvKey) return new Response('Missing key', { status: 400 });
 
+  const isPrivateKey = kvKey.startsWith('private:');
+
   switch (request.method) {
     case 'GET': {
+      if (isPrivateKey && !isAuthorized(request, serviceToken)) {
+        return new Response('Forbidden', { status: 403 });
+      }
       const value = await kv.get(kvKey);
       if (value === null) return new Response('Not Found', { status: 404 });
       return new Response(value, { headers: { 'Content-Type': 'application/json' } });
