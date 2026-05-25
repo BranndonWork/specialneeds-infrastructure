@@ -75,7 +75,7 @@ export default {
 
     let response: Response;
 
-    const bypassCache = pathname.startsWith('/api/my-account/');
+    const bypassCache = request.headers.has('authorization');
 
     if (method === 'GET' && !bypassCache) {
       const t3 = Date.now();
