@@ -75,7 +75,9 @@ export default {
 
     let response: Response;
 
-    if (method === 'GET') {
+    const bypassCache = pathname.startsWith('/api/my-account/');
+
+    if (method === 'GET' && !bypassCache) {
       const t3 = Date.now();
       const cached = await checkCache(request, env.CACHE_KV, ctx);
       if (cached) {

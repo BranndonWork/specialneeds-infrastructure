@@ -120,13 +120,11 @@ export async function handleKvEndpoint(
       case 'DELETE': {
         if (!isAuthorized(request, serviceToken)) return new Response('Forbidden', { status: 403 });
         const isApiUrl = new URL(targetUrl).hostname === CF_PROXIED_HOST;
-        if (isApiUrl) {
-          await Promise.all([
-            kv.delete(hash),
-            caches.default.delete(new Request(`https://cache.internal/${hash}`)),
-          ]);
-          if (cfApiToken) ctx.waitUntil(purgeCfCdn(targetUrl, cfApiToken));
-        }
+        await Promise.all([
+          kv.delete(hash),
+          caches.default.delete(new Request(`https://cache.internal/${hash}`)),
+        ]);
+        if (isApiUrl && cfApiToken) ctx.waitUntil(purgeCfCdn(targetUrl, cfApiToken));
         if (revalidateSecret) ctx.waitUntil(revalidateNextJs(targetUrl, revalidateSecret, snServiceToken));
         return new Response('OK');
       }
