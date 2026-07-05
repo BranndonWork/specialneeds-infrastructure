@@ -6,6 +6,7 @@ This repository does NOT contain Docker configurations, nginx configs, database 
 
 ## Quick Reference
 
+- **[Cache Policy (SSOT)](docs/cache-policy.md)** — Cross-repo cache map: every layer (origin headers, worker L1/KV, CDN, ISR), authority order, TTLs, the single invalidation mechanism, known gaps. **Start here for any cache question.**
 - **[API Gateway](docs/api-gateway.md)** — As-built reference for the api-gateway Worker: rate limiting, caching, cache invalidation, KV store, origin hardening
 - **[Workers](docs/workers.md)** — All deployed workers: api-gateway, meilisearch-proxy, special-needs R2 bucket worker
 - **[Architecture](docs/architecture.md)** — Tech stack, directory structure, R2 bucket architecture, environment routing pattern, file organization
