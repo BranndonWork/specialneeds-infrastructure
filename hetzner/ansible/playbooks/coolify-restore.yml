@@ -1,0 +1,86 @@
+---
+# coolify-restore.yml
+# Restores coolify-db from an R2 backup, then restarts the Coolify stack.
+#
+# This restores Coolify's config DB (projects, apps, env vars, deploy history).
+# It does NOT restore application data — Postgres (Supabase) and Meilisearch
+# are restored via separate runbooks.
+#
+# Usage:
+#   ansible-playbook playbooks/coolify-restore.yml --limit box-b \
+#     -e backup_file=coolify-db-2026-04-19.sql.gz \
+#     -e bws_access_token=<from personal Bitwarden>
+#
+# See: docs/specialneeds-api/planned-work/disaster-recovery/runbook-coolify-restore.md
+
+- name: Restore Coolify DB from R2 backup
+  hosts: coolify_hosts
+  become: true
+
+  vars:
+    backup_bucket: "{{ coolify_db_backup_bucket }}"
+    backup_local_path: "/tmp/coolify-db-restore.sql.gz"
+
+  tasks:
+    - name: Require backup_file variable
+      assert:
+        that: backup_file is defined and backup_file != ""
+        fail_msg: "Pass -e backup_file=<filename> to specify which R2 backup to restore"
+
+    - name: Get R2 credentials from bws
+      shell: bws secret get {{ item.key }} --output json | python3 -c "import json,sys; print(json.load(sys.stdin)['value'])"
+      environment:
+        BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
+      loop:
+        - { key: prod__api__CLOUDFLARE_R2_DATA_ACCESS_KEY_ID,     var: r2_access_key_id }
+        - { key: prod__api__CLOUDFLARE_R2_DATA_ACCESS_KEY_SECRET,  var: r2_access_key_secret }
+        - { key: prod__api__CLOUDFLARE_R2_DATA_ENDPOINT_URL,        var: r2_endpoint_url }
+      register: r2_creds_raw
+      no_log: true
+
+    - name: Set R2 credential facts
+      set_fact:
+        r2_access_key_id:     "{{ r2_creds_raw.results[0].stdout }}"
+        r2_access_key_secret: "{{ r2_creds_raw.results[1].stdout }}"
+        r2_endpoint_url:      "{{ r2_creds_raw.results[2].stdout }}"
+      no_log: true
+
+    - name: Download backup from R2
+      shell: |
+        AWS_ACCESS_KEY_ID="{{ r2_access_key_id }}" \
+        AWS_SECRET_ACCESS_KEY="{{ r2_access_key_secret }}" \
+        aws s3 cp \
+          s3://{{ backup_bucket }}/{{ backup_file }} \
+          {{ backup_local_path }} \
+          --endpoint-url {{ r2_endpoint_url }}
+      no_log: true
+
+    - name: Stop Coolify stack (keep coolify-db running)
+      shell: |
+        cd /data/coolify
+        docker compose stop coolify coolify-realtime coolify-redis coolify-sentinel coolify-proxy
+
+    - name: Restore coolify-db from backup
+      shell: |
+        gunzip -c {{ backup_local_path }} | \
+        docker exec -i coolify-db psql -U coolify coolify
+
+    - name: Restart full Coolify stack
+      shell: |
+        cd /data/coolify
+        docker compose start
+
+    - name: Wait for Coolify to be ready
+      uri:
+        url: "http://localhost:{{ coolify_port }}/api/health"
+        status_code: 200
+        timeout: 10
+      register: coolify_health
+      retries: 30
+      delay: 10
+      until: coolify_health.status == 200
+
+    - name: Clean up local backup file
+      file:
+        path: "{{ backup_local_path }}"
+        state: absent

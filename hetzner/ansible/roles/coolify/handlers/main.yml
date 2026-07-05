@@ -1,0 +1,3 @@
+---
+- name: restart coolify
+  shell: cd /data/coolify && docker compose restart

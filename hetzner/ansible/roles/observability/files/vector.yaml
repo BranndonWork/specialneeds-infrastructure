@@ -1,0 +1,31 @@
+sources:
+  docker_logs:
+    type: docker_logs
+
+transforms:
+  parse_level:
+    type: remap
+    inputs:
+      - docker_logs
+    source: |
+      .log_level = "INFO"
+      if contains(string!(.message), "DEBUG") { .log_level = "DEBUG" }
+      if contains(string!(.message), "WARNING") || contains(string!(.message), "WARN") { .log_level = "WARNING" }
+      if contains(string!(.message), "ERROR") { .log_level = "ERROR" }
+      if contains(string!(.message), "CRITICAL") { .log_level = "CRITICAL" }
+
+sinks:
+  openobserve:
+    type: http
+    inputs:
+      - parse_level
+    uri: "http://openobserve:5080/api/default/specialneeds/_json"
+    method: post
+    auth:
+      strategy: basic
+      user: "${OPENOBSERVE_EMAIL}"
+      password: "${OPENOBSERVE_PASSWORD}"
+    encoding:
+      codec: json
+    batch:
+      timeout_secs: 5

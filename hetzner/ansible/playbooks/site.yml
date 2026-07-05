@@ -1,0 +1,37 @@
+---
+# site.yml — Full host bring-up playbook
+# Runs all roles in order. Idempotent — safe to re-run on a running host.
+#
+# Usage:
+#   Full bring-up of Box B:
+#     ansible-playbook playbooks/site.yml --limit box-b \
+#       -e bws_access_token=$(bws secret get prod__api__... )
+#
+#   Syntax check (no SSH):
+#     ansible-playbook playbooks/site.yml --syntax-check
+#
+#   Dry run against Box A:
+#     ansible-playbook playbooks/site.yml --limit box-a --check
+#
+# bws_access_token must be passed via -e or set as an environment variable.
+# Never hardcode it. Retrieve from your personal Bitwarden vault before running.
+
+- name: Bootstrap Coolify hosts
+  hosts: coolify_hosts
+  become: true
+
+  vars_prompt:
+    - name: bws_access_token
+      prompt: "bws access token (from your personal Bitwarden vault)"
+      private: yes
+      # Pass via -e bws_access_token=... to skip the prompt in automation
+
+  roles:
+    - ssh-hardening
+    - ufw
+    - bws-bootstrap
+    - docker
+    - coolify
+    - crowdsec
+    - observability
+    - monitor-scripts

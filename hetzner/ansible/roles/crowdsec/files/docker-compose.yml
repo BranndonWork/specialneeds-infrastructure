@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+    crowdsec:
+        image: crowdsecurity/crowdsec
+        container_name: crowdsec
+        restart: always
+        environment:
+            ENROLL_KEY: "${CROWDSEC_ENROLL_KEY}"
+            ENROLL_INSTANCE_NAME: "{{ inventory_hostname }}-production-server"
+            ENROLL_TAGS: "coolify,hetzner,production"
+            COLLECTIONS: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/whitelist-good-actors crowdsecurity/linux"
+            GID: "1000"
+        ports:
+            - "8095:8080"
+        volumes:
+            - ./acquis.yaml:/etc/crowdsec/acquis.yaml
+            - crowdsec-config:/etc/crowdsec/
+            - crowdsec-db:/var/lib/crowdsec/data/
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - /var/lib/docker/volumes/coolify/_data/proxy/logs:/var/log/traefik:ro
+        networks:
+            - crowdsec
+
+volumes:
+    crowdsec-config:
+    crowdsec-db:
+
+networks:
+    crowdsec:
+        name: crowdsec
+        driver: bridge

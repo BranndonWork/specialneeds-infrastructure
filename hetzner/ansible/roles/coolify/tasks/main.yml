@@ -1,0 +1,25 @@
+---
+- name: Check if Coolify data directory exists
+  stat:
+    path: /data/coolify
+  register: coolify_data_dir
+
+- name: Run Coolify installer
+  shell: curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+  args:
+    creates: /data/coolify
+  when: not coolify_data_dir.stat.exists
+
+- name: Wait for Coolify API to respond (up to 5 minutes)
+  uri:
+    url: "http://localhost:{{ coolify_port }}/api/health"
+    status_code: 200
+    timeout: 10
+  register: coolify_health
+  retries: 30
+  delay: 10
+  until: coolify_health.status == 200
+
+- name: Confirm Coolify is healthy
+  debug:
+    msg: "Coolify is ready at http://localhost:{{ coolify_port }}"

@@ -1,0 +1,11 @@
+**/*.tfvars
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+**/*.tfstate.*.backup
+**/crash.log
+**/*.tfplan
+# .terraform.lock.hcl is intentionally NOT ignored — commit it to pin provider versions
+
+# Live secret values — synced to Coolify via sync-secrets-to-coolify.yml, never committed
+ansible/secrets.yml

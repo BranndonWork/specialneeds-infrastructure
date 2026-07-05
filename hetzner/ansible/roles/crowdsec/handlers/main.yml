@@ -1,0 +1,6 @@
+---
+- name: restart crowdsec bouncer
+  service:
+    name: crowdsec-cloudflare-worker-bouncer
+    state: restarted
+    enabled: yes

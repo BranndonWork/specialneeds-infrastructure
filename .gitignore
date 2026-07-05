@@ -47,3 +47,6 @@ build/
 # Terraform (separate git repo)
 terraform/
 docs/
+
+# Claude Code local settings
+.claude/settings.local.json

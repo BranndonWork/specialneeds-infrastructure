@@ -1,0 +1,78 @@
+---
+# CrowdSec runs outside Coolify at /data/crowdsec/.
+# Compose captured from Box A 2026-04-19.
+# ENROLL_KEY must be in bws as prod__api__CROWDSEC_ENROLL_KEY (add if not yet there).
+
+- name: Create /data/crowdsec directory
+  file:
+    path: /data/crowdsec
+    state: directory
+    mode: "0755"
+
+- name: Get CrowdSec enroll key from bws
+  shell: >
+    bws secret list --output json |
+    python3 -c "import json,sys; s=json.load(sys.stdin); print(next(x['value'] for x in s if x['key']=='prod__api__CROWDSEC_ENROLL_KEY'), end='')"
+  environment:
+    BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
+  register: crowdsec_enroll_key_raw
+  changed_when: false
+  no_log: true
+
+- name: Deploy crowdsec compose file
+  template:
+    src: docker-compose.yml
+    dest: /data/crowdsec/docker-compose.yml
+    mode: "0644"
+
+- name: Deploy acquis.yaml
+  copy:
+    src: acquis.yaml
+    dest: /data/crowdsec/acquis.yaml
+    mode: "0644"
+
+- name: Write crowdsec .env file
+  copy:
+    content: "CROWDSEC_ENROLL_KEY={{ crowdsec_enroll_key_raw.stdout }}"
+    dest: /data/crowdsec/.env
+    mode: "0600"
+    owner: root
+    group: root
+  no_log: true
+
+- name: Start CrowdSec stack
+  community.docker.docker_compose_v2:
+    project_src: /data/crowdsec
+    project_name: crowdsec
+    state: present
+
+- name: Install crowdsec-cloudflare-worker-bouncer
+  block:
+    - name: Get bouncer API key from bws
+      shell: >
+        bws secret list --output json |
+        python3 -c "import json,sys; s=json.load(sys.stdin); print(next(x['value'] for x in s if x['key']=='prod__api__CROWDSEC_CLOUDFLARE_WORKER_BOUNCER_API_KEY'), end='')"
+      environment:
+        BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
+      register: bouncer_key_raw
+      changed_when: false
+      no_log: true
+
+    - name: Add CrowdSec packagecloud repo
+      shell: curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash
+      args:
+        creates: /etc/apt/sources.list.d/crowdsec_crowdsec.list
+
+    - name: Install bouncer package
+      apt:
+        name: crowdsec-cloudflare-worker-bouncer
+        state: present
+        update_cache: yes
+
+    - name: Configure bouncer API key
+      lineinfile:
+        path: /etc/crowdsec/bouncers/crowdsec-cloudflare-worker-bouncer.yaml
+        regexp: "^api_key:"
+        line: "api_key: {{ bouncer_key_raw.stdout }}"
+      no_log: true
+      notify: restart crowdsec bouncer

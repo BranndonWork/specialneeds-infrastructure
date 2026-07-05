@@ -1,0 +1,38 @@
+---
+- name: Install ufw
+  apt:
+    name: ufw
+    state: present
+    update_cache: yes
+
+- name: Set default incoming policy to deny
+  ufw:
+    default: deny
+    direction: incoming
+
+- name: Set default outgoing policy to allow
+  ufw:
+    default: allow
+    direction: outgoing
+
+- name: Allow SSH
+  ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: Allow HTTP
+  ufw:
+    rule: allow
+    port: "80"
+    proto: tcp
+
+- name: Allow HTTPS
+  ufw:
+    rule: allow
+    port: "443"
+    proto: tcp
+
+- name: Enable ufw
+  ufw:
+    state: enabled

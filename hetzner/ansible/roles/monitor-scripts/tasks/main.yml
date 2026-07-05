@@ -1,0 +1,29 @@
+---
+# Installs /root/monitor_api_health.sh and registers the cron entry.
+# The script probes api.specialneeds.com/health every minute.
+# After 5 consecutive failures it restarts coolify-proxy (Traefik).
+# A 60-minute cooldown prevents repeated restarts.
+#
+# TODO (open item 7): Capture the actual script from Box A before Phase 4a:
+#   ssh root@46.224.10.193 "cat /root/monitor_api_health.sh"
+# Then replace roles/monitor-scripts/files/monitor_api_health.sh with the real content.
+
+- name: Install monitor_api_health.sh
+  copy:
+    src: monitor_api_health.sh
+    dest: /root/monitor_api_health.sh
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Register cron job for API health monitor
+  cron:
+    name: "Monitor API health and restart Traefik on failure"
+    minute: "*"
+    hour: "*"
+    day: "*"
+    month: "*"
+    weekday: "*"
+    job: "/root/monitor_api_health.sh >> /var/log/monitor_api_health.log 2>&1"
+    user: root
+    state: present

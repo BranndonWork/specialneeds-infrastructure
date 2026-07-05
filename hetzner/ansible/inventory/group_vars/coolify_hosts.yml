@@ -1,0 +1,7 @@
+# Vars applied to all hosts in the coolify_hosts group
+
+coolify_db_backup_bucket: specialneeds-coolify-backups
+coolify_api_base: "http://localhost:{{ coolify_port }}/api/v1"
+
+# Ansible health probe URL — used by monitor_api_health.sh
+api_health_url: "https://api.specialneeds.com/health/?simple=true"

@@ -1,0 +1,13 @@
+---
+# Monitor Django containers (both staging and production)
+source: docker
+container_name_regexp:
+    - "^django-.*"
+labels:
+    type: django
+---
+# Monitor Traefik/Coolify proxy logs
+source: file
+filename: /var/log/traefik/*.log
+labels:
+    type: traefik

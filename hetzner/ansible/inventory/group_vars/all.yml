@@ -1,0 +1,19 @@
+# Shared vars applied to all hosts in all groups
+
+# bws project ID for specialneeds-api — get via: bws project list
+# Look for the project named "specialneeds-api"
+bws_project_id: "PLACEHOLDER_BWS_PROJECT_ID"
+
+# bws CLI version — check https://github.com/bitwarden/sdk-sm/releases before provisioning
+bws_cli_version: "0.5.0"
+
+# Coolify version pinned to what runs on Box A today
+# Verify current Box A version: docker inspect coolify | grep Image
+coolify_version: "4.0.0-beta.473"
+coolify_port: 8000
+
+# Docker network shared across all sn-services-* apps
+docker_network_name: sn-services-net
+
+# Path where bws access token is stored on the host
+bws_token_path: /etc/bws/access_token

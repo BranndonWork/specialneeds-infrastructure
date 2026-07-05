@@ -1,0 +1,59 @@
+---
+# Observability stack: sn-openobserve + sn-vector
+# Compose captured from Box A at /opt/observability/ on 2026-04-19.
+# OPENOBSERVE_EMAIL and OPENOBSERVE_PASSWORD must be in bws as:
+#   prod__api__OPENOBSERVE_EMAIL
+#   prod__api__OPENOBSERVE_PASSWORD
+
+- name: Create /opt/observability/observability directory
+  file:
+    path: /opt/observability/observability
+    state: directory
+    mode: "0755"
+
+- name: Get OpenObserve credentials from bws
+  shell: >
+    bws secret list --output json |
+    python3 -c "import json,sys; s=json.load(sys.stdin); m={x['key']:x['value'] for x in s}; print(m['prod__api__OPENOBSERVE_EMAIL']+'|'+m['prod__api__OPENOBSERVE_PASSWORD'], end='')"
+  environment:
+    BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
+  register: openobserve_creds_raw
+  changed_when: false
+  no_log: true
+
+- name: Set OpenObserve credential facts
+  set_fact:
+    openobserve_email:    "{{ openobserve_creds_raw.stdout.split('|')[0] }}"
+    openobserve_password: "{{ openobserve_creds_raw.stdout.split('|')[1] }}"
+  no_log: true
+
+- name: Write .env.observability
+  copy:
+    content: |
+      OPENOBSERVE_EMAIL={{ openobserve_email }}
+      OPENOBSERVE_PASSWORD={{ openobserve_password }}
+    dest: /opt/observability/.env.observability
+    mode: "0600"
+    owner: root
+    group: root
+  no_log: true
+
+- name: Deploy observability compose file
+  copy:
+    src: docker-compose.yml
+    dest: /opt/observability/docker-compose.observability.yml
+    mode: "0644"
+
+- name: Deploy vector config
+  copy:
+    src: vector.yaml
+    dest: /opt/observability/observability/vector.yaml
+    mode: "0644"
+
+- name: Start observability stack
+  community.docker.docker_compose_v2:
+    project_src: /opt/observability
+    files:
+      - docker-compose.observability.yml
+    project_name: observability
+    state: present
