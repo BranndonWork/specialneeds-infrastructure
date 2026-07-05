@@ -5,6 +5,7 @@ const REVALIDATE_URL = 'https://www.specialneeds.com/api/admin/revalidate/';
 // www.specialneeds.com is Vercel-hosted and not Cloudflare-proxied.
 // Cloudflare CDN purge calls for this host are no-ops — skip them.
 const CF_PROXIED_HOST = 'api.specialneeds.com';
+const FRONTEND_HOST = 'www.specialneeds.com';
 
 function isAuthorized(request: Request, secret: string): boolean {
   return Boolean(secret && request.headers.get('X-Sn-Service-Token') === secret);
@@ -30,18 +31,36 @@ async function purgeCfCdn(targetUrl: string, cfApiToken: string): Promise<void> 
   console.log(`[purge-cdn] ${targetUrl} → ${res.status}`);
 }
 
-function apiPathToFrontendPaths(apiPath: string): string[] {
-  const listingMatch = apiPath.match(/^\/api\/v1\/listings\/display\/(.+?)\/$/);
-  if (listingMatch) return [`/directory/${listingMatch[1]}`, '/'];
+// Paths are emitted WITH a trailing slash — the site builds with trailingSlash: true
+// and that is the canonical ISR key form (see specialneeds-client/scripts/revalidate.sh).
+export function apiPathToFrontendPaths(apiPath: string): string[] {
+  const listingMatch = apiPath.match(/^\/api\/v1\/listings\/display\/(.+?)\/?$/);
+  if (listingMatch) return [`/directory/${listingMatch[1]}/`, '/'];
 
-  const articleMatch = apiPath.match(/^\/api\/v1\/articles\/display\/(.+?)\/$/);
-  if (articleMatch) return [`/articles/${articleMatch[1]}`];
+  const articleMatch = apiPath.match(/^\/api\/v1\/articles\/display\/(.+?)\/?$/);
+  if (articleMatch) return [`/articles/${articleMatch[1]}/`];
+
+  // Event display: /api/v1/events/{identifier}/ (DB slugs carry an extra "events/" prefix).
+  // The other single-segment /api/v1/events/ endpoints are aggregates, not pages.
+  const eventMatch = apiPath.match(/^\/api\/v1\/events\/(?:events\/)?([^/]+)\/?$/);
+  if (eventMatch && !['categories', 'popular_tags', 'search'].includes(eventMatch[1])) {
+    return [`/events/${eventMatch[1]}/`];
+  }
 
   return [];
 }
 
+export function frontendPathsFor(targetUrl: string): string[] {
+  const url = new URL(targetUrl);
+  // A frontend URL revalidates its own page; an API URL maps to the pages built from it.
+  if (url.hostname === FRONTEND_HOST) {
+    return [url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`];
+  }
+  return apiPathToFrontendPaths(url.pathname);
+}
+
 async function revalidateNextJs(targetUrl: string, revalidateSecret: string, snServiceToken: string): Promise<void> {
-  const paths = apiPathToFrontendPaths(new URL(targetUrl).pathname);
+  const paths = frontendPathsFor(targetUrl);
   if (paths.length === 0) {
     console.log(`[revalidate-isr] skipped — no frontend mapping for ${new URL(targetUrl).pathname}`);
     return;
