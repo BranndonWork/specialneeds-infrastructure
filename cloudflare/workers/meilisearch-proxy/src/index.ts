@@ -1,5 +1,8 @@
 /**
  * Meilisearch proxy worker - forwards search requests to Hetzner backend
+ *
+ * Keep src/index.ts identical to meilisearch-proxy-staging/src/index.ts;
+ * only wrangler.jsonc (MEILI_HOST, route) differs between the two workers.
  */
 
 interface Env {
@@ -10,9 +13,11 @@ interface Env {
 
 const CORS_HEADERS = {
 	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+	'Access-Control-Allow-Methods': 'POST, OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type, X-Status-Bypass',
 };
+
+const SEARCH_PATH = /^\/indexes\/[^/]+\/search$/;
 
 function isValidBypassSecret(request: Request, env: Env): boolean {
 	const header = request.headers.get('X-Status-Bypass') ?? '';
@@ -42,45 +47,48 @@ export default {
 			});
 		}
 
-		// Only allow search endpoints
-		if (!url.pathname.startsWith('/indexes/')) {
+		// Only the search endpoint is proxied; documents, settings, keys, etc. stay unreachable
+		if (!SEARCH_PATH.test(url.pathname)) {
 			return new Response('Not Found', {
 				status: 404,
 				headers: CORS_HEADERS
 			});
 		}
 
+		// POST only: GET search reads ?filter= from the querystring, which the
+		// body injection below never sees, so it could bypass the status filter
+		if (request.method !== 'POST') {
+			return new Response('Method Not Allowed', {
+				status: 405,
+				headers: { ...CORS_HEADERS, 'Allow': 'POST' }
+			});
+		}
+
 		try {
-			// Build Meilisearch URL
-			const meiliUrl = `${env.MEILI_HOST}${url.pathname}${url.search}`;
+			// Querystring is dropped: POST search reads parameters from the body only
+			const meiliUrl = `${env.MEILI_HOST}${url.pathname}`;
 
 			// Inject status = published filter into public search requests.
 			// Requests from the Next.js server-side proxy that include the bypass
 			// secret are allowed to search across all statuses.
-			let body: string | null = null;
-			if (request.method === 'POST') {
-				const raw = await request.text();
-				const isSearchEndpoint = /\/indexes\/[^/]+\/search$/.test(url.pathname);
-				const bypass = isValidBypassSecret(request, env);
-				if (isSearchEndpoint && raw && !bypass) {
-					const parsed = JSON.parse(raw);
-					const existing = parsed.filter;
-					if (existing == null) {
-						parsed.filter = 'status = published';
-					} else if (Array.isArray(existing)) {
-						parsed.filter = ['status = published', ...existing];
-					} else {
-						parsed.filter = ['status = published', existing];
-					}
-					body = JSON.stringify(parsed);
+			const raw = await request.text();
+			let body = raw;
+			if (raw && !isValidBypassSecret(request, env)) {
+				const parsed = JSON.parse(raw);
+				const existing = parsed.filter;
+				if (existing == null) {
+					parsed.filter = 'status = published';
+				} else if (Array.isArray(existing)) {
+					parsed.filter = ['status = published', ...existing];
 				} else {
-					body = raw;
+					parsed.filter = ['status = published', existing];
 				}
+				body = JSON.stringify(parsed);
 			}
 
 			// Forward request to Meilisearch (strip X-Status-Bypass — never forward to origin)
 			const meiliRequest = new Request(meiliUrl, {
-				method: request.method,
+				method: 'POST',
 				headers: {
 					'Authorization': `Bearer ${env.MEILI_SEARCH_KEY}`,
 					'Content-Type': 'application/json',

@@ -45,6 +45,47 @@ describe('meilisearch-proxy', () => {
 			const response = await dispatch(new Request(`${BASE}/`));
 			expect(response.status).toBe(404);
 		});
+
+		it('rejects document endpoints under /indexes/', async () => {
+			const response = await dispatch(new Request(`${BASE}/indexes/listings/documents`, { method: 'POST' }));
+			expect(response.status).toBe(404);
+		});
+
+		it('rejects settings endpoints under /indexes/', async () => {
+			const response = await dispatch(new Request(`${BASE}/indexes/listings/settings`));
+			expect(response.status).toBe(404);
+		});
+
+		it('rejects /multi-search', async () => {
+			const response = await dispatch(new Request(`${BASE}/multi-search`, { method: 'POST' }));
+			expect(response.status).toBe(404);
+		});
+	});
+
+	describe('method guard', () => {
+		it('rejects GET search with 405', async () => {
+			const response = await dispatch(new Request(`${BASE}/indexes/listings/search?q=autism`));
+			expect(response.status).toBe(405);
+			expect(response.headers.get('Allow')).toBe('POST');
+		});
+
+		it('does not forward a GET search with a crafted status filter', async () => {
+			const crafted = `${BASE}/indexes/listings/search?q=&filter=${encodeURIComponent("status = 'draft'")}`;
+			const response = await dispatch(new Request(crafted));
+			expect(response.status).toBe(405);
+		});
+
+		it('rejects GET search even with a valid bypass secret', async () => {
+			const response = await dispatch(new Request(`${BASE}/indexes/listings/search?q=draft`, {
+				headers: { 'X-Status-Bypass': 'test-bypass-secret' },
+			}));
+			expect(response.status).toBe(405);
+		});
+
+		it('rejects DELETE search with 405', async () => {
+			const response = await dispatch(new Request(`${BASE}/indexes/listings/search`, { method: 'DELETE' }));
+			expect(response.status).toBe(405);
+		});
 	});
 
 	describe('status filter injection', () => {
