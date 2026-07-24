@@ -13,3 +13,17 @@ This repository does NOT contain Docker configurations, nginx configs, database 
 - **[Commands](docs/commands.md)** — Development commands for each worker, setting secrets, viewing logs, local testing
 - **[Deployment](docs/deployment.md)** — Deployment workflow, testing approach, secrets management
 - **[Cloudflare Workers Reference](docs/cloudflare-workers-reference.md)** — General best practices, common patterns, security and performance tips
+
+## Agent skills
+
+### Issue tracker
+
+Issues live on the central company tracker `BranndonWork/special-needs` (never this repo), managed via `gh -R BranndonWork/special-needs` with the `repo: specialneeds-infrastructure` label. PRs stay here. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), each label string equal to its role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
