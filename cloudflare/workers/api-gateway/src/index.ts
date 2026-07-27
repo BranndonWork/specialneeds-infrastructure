@@ -12,6 +12,7 @@ export interface Env {
   CF_API_TOKEN: string;
   REVALIDATE_SECRET: string;
   SN_SERVICE_TOKEN: string;
+  SERVER_TO_SERVER_TOKEN: string;
 }
 
 async function proxyToOrigin(request: Request, originUrl: string, originSecret: string): Promise<Response> {
@@ -68,10 +69,19 @@ export default {
       return new Response(kvResponse.body, { status: kvResponse.status, statusText: kvResponse.statusText, headers });
     }
 
-    const t2 = Date.now();
-    const rlResult = await checkRateLimit(request);
-    console.log(`[rate-limit] limited=${rlResult.limited} ${Date.now() - t2}ms`);
-    if (rlResult.limited) return rateLimitResponse(rlResult.retryAfter!);
+    // Server-to-server callers (the Next.js render fetches, internal services) authenticate with
+    // the same token Django's auth middleware validates. They are not anonymous browsers, and
+    // 24k ISR rebuilds after a cache purge must not trip the per-IP browse limit (2026-07-27:
+    // that turned every directory page into a cached 404).
+    const s2sHeader = request.headers.get('x-specialneeds-server-auth')?.replace(/"/g, '') ?? '';
+    const isS2S = Boolean(s2sHeader && env.SERVER_TO_SERVER_TOKEN && s2sHeader === env.SERVER_TO_SERVER_TOKEN);
+
+    if (!isS2S) {
+      const t2 = Date.now();
+      const rlResult = await checkRateLimit(request);
+      console.log(`[rate-limit] limited=${rlResult.limited} ${Date.now() - t2}ms`);
+      if (rlResult.limited) return rateLimitResponse(rlResult.retryAfter!);
+    }
 
     let response: Response;
 

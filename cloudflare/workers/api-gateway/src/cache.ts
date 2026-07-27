@@ -107,7 +107,11 @@ export async function fetchAndCache(
     res = await fetch(new Request(target.toString(), {
       method: request.method,
       headers: originHeaders,
-      body: request.body,
+      // A GET/HEAD Request may not carry a body, but axios GETs (the Next.js render fetches)
+      // arrive with an empty body stream attached. Passing it through throws
+      // "Request with a GET or HEAD method cannot have a body" and turned every cache-miss
+      // render fetch into a 503 (2026-07-27: 24k directory pages cached as 404s).
+      body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
     }));
     console.log(`[origin:fetch] status=${res.status} ${Date.now() - t0}ms ${target.pathname}`);
   } catch (err) {
