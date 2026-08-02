@@ -13,6 +13,8 @@ export default defineWorkersConfig({
 						REVALIDATE_SECRET: 'test-revalidate-secret',
 						SN_SERVICE_TOKEN: 'test-sn-service-token',
 						ORIGIN_URL: 'https://origin.test',
+						IDENTITY_SIGNING_SECRET: 'test-identity-signing-secret',
+						IDENTITY_SIGNING_SECRET_PREVIOUS: 'test-identity-signing-secret-previous',
 					},
 				},
 			},

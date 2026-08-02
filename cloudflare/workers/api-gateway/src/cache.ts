@@ -1,3 +1,5 @@
+import { stripIdentityHeaders } from './identity';
+
 const DEFAULT_MAX_AGE = 300;  // fallback if Django sends no Cache-Control
 
 export async function cacheKey(url: string): Promise<string> {
@@ -82,6 +84,7 @@ export async function fetchAndCache(
   cacheKv: KVNamespace,
   ctx: ExecutionContext,
   originSecret: string,
+  visitorIp: string | null,
 ): Promise<Response> {
   const cacheable = isCacheable(request);
   const key = cacheable ? await cacheKey(request.url) : '';
@@ -100,6 +103,10 @@ export async function fetchAndCache(
 
   const originHeaders = new Headers(request.headers);
   originHeaders.set('x-worker-origin-secret', originSecret);
+  stripIdentityHeaders(originHeaders);
+  // Django's request_logger attributes and bans on CF-Connecting-IP. Behind the www proxy that
+  // header is our own egress, so a verified visitor IP replaces it.
+  if (visitorIp) originHeaders.set('CF-Connecting-IP', visitorIp);
 
   let res: Response;
   try {
