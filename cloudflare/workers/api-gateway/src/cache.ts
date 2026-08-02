@@ -1,6 +1,23 @@
 import { stripIdentityHeaders } from './identity';
 
 const DEFAULT_MAX_AGE = 300;  // fallback if Django sends no Cache-Control
+const DEFAULT_STALE_IF_ERROR = 86400;  // how long an expired entry is kept purely as an origin-down fallback
+const KV_MIN_TTL = 60;  // Cloudflare KV rejects expirationTtl below 60s
+
+interface CacheMeta {
+  contentType: string;
+  cacheControl: string;
+  storedAt?: number;
+  maxAge?: number;
+}
+
+// An entry past its max-age is not served, but is kept in KV so fetchAndCache can fall back to it
+// if the origin is unreachable. Entries written before storedAt existed are treated as expired so
+// they refresh once on next request.
+function isFresh(meta: CacheMeta | null | undefined): boolean {
+  if (!meta?.storedAt || meta.maxAge === undefined) return false;
+  return (Date.now() - meta.storedAt) / 1000 < meta.maxAge;
+}
 
 export async function cacheKey(url: string): Promise<string> {
   const u = new URL(url);
@@ -12,14 +29,19 @@ export async function cacheKey(url: string): Promise<string> {
   return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function parseCacheControl(header: string | null): { cacheable: boolean; maxAge: number } {
-  if (!header) return { cacheable: true, maxAge: DEFAULT_MAX_AGE };
+function parseCacheControl(header: string | null): { cacheable: boolean; maxAge: number; staleIfError: number } {
+  if (!header) return { cacheable: true, maxAge: DEFAULT_MAX_AGE, staleIfError: DEFAULT_STALE_IF_ERROR };
   const cc = header.toLowerCase();
   if (cc.includes('no-store') || cc.includes('private') || cc.includes('no-cache')) {
-    return { cacheable: false, maxAge: 0 };
+    return { cacheable: false, maxAge: 0, staleIfError: 0 };
   }
   const match = cc.match(/max-age=(\d+)/);
-  return { cacheable: true, maxAge: match ? parseInt(match[1], 10) : DEFAULT_MAX_AGE };
+  const stale = cc.match(/stale-if-error=(\d+)/);
+  return {
+    cacheable: true,
+    maxAge: match ? parseInt(match[1], 10) : DEFAULT_MAX_AGE,
+    staleIfError: stale ? parseInt(stale[1], 10) : DEFAULT_STALE_IF_ERROR,
+  };
 }
 
 function isCacheable(request: Request): boolean {
@@ -59,8 +81,14 @@ export async function checkCache(
 
   // L2 — KV (global, stale fallback)
   const t2 = Date.now();
-  const stored = await cacheKv.getWithMetadata<{ contentType: string; cacheControl: string }>(key, 'text');
+  const stored = await cacheKv.getWithMetadata<CacheMeta>(key, 'text');
   console.log(`[cache:l2-kv] ${stored.value ? 'HIT' : 'MISS'} ${Date.now() - t2}ms`);
+  if (stored.value && !isFresh(stored.metadata)) {
+    // Past Django's max-age. Fall through to the origin. The entry stays in KV for the
+    // origin-down fallback in fetchAndCache.
+    console.log(`[cache:l2-expired] age exceeded max-age=${stored.metadata?.maxAge ?? 'unset'}`);
+    return null;
+  }
   if (stored.value) {
     const kvResponse = new Response(stored.value, {
       headers: {
@@ -125,7 +153,7 @@ export async function fetchAndCache(
     console.log(`[origin:fetch] error: ${err}`);
     // Origin unreachable — serve stale if available
     if (cacheable) {
-      const stale = await cacheKv.getWithMetadata<{ contentType: string }>(key, 'text');
+      const stale = await cacheKv.getWithMetadata<CacheMeta>(key, 'text');
       if (stale.value) {
         console.log(`[origin:stale-fallback] serving stale from KV`);
         return new Response(stale.value, {
@@ -144,7 +172,7 @@ export async function fetchAndCache(
   }
 
   if (cacheable && res.ok) {
-    const { cacheable: shouldCache, maxAge } = parseCacheControl(res.headers.get('Cache-Control'));
+    const { cacheable: shouldCache, maxAge, staleIfError } = parseCacheControl(res.headers.get('Cache-Control'));
 
     if (shouldCache && maxAge > 0) {
       const body = await res.text();
@@ -161,7 +189,8 @@ export async function fetchAndCache(
         Promise.all([
           caches.default.put(cacheRequest!, toCache.clone()),
           cacheKv.put(key, body, {
-            metadata: { contentType, cacheControl },
+            expirationTtl: Math.max(maxAge + staleIfError, KV_MIN_TTL),
+            metadata: { contentType, cacheControl, storedAt: Date.now(), maxAge },
           }),
         ])
           .then(() => console.log(`[cache:write] l1+l2 ok key=${key.slice(0, 12)}`))
