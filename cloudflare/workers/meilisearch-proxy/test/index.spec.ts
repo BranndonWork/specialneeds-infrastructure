@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext, fetchMock } from 'cloudflare:test';
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import worker from '../src';
 
 const BASE = 'http://example.com';
@@ -12,9 +12,9 @@ function makeSearchRequest(body: object, headers: Record<string, string> = {}): 
 	});
 }
 
-async function dispatch(request: Request): Promise<Response> {
+async function dispatch(request: Request, overrides: object = {}): Promise<Response> {
 	const ctx = createExecutionContext();
-	const response = await worker.fetch(request, env, ctx);
+	const response = await worker.fetch(request, { ...env, ...overrides }, ctx);
 	await waitOnExecutionContext(ctx);
 	return response;
 }
@@ -183,6 +183,118 @@ describe('meilisearch-proxy', () => {
 				{ q: 'test' },
 				{ 'X-Status-Bypass': 'test-bypass-secret' },
 			));
+		});
+	});
+
+	describe('search query logging', () => {
+		function fakeDataset() {
+			return { writeDataPoint: vi.fn() };
+		}
+
+		function replyWithHits(path = '/indexes/listings/search', hits = 3) {
+			fetchMock
+				.get(env.MEILI_HOST)
+				.intercept({ method: 'POST', path })
+				.reply(200, JSON.stringify({ hits: [], estimatedTotalHits: hits }));
+		}
+
+		it('writes one data point per logged search', async () => {
+			replyWithHits();
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			const response = await dispatch(makeSearchRequest({ q: 'Speech Therapy' }), { SEARCH_ANALYTICS });
+
+			expect(response.status).toBe(200);
+			expect(SEARCH_ANALYTICS.writeDataPoint).toHaveBeenCalledTimes(1);
+			expect(SEARCH_ANALYTICS.writeDataPoint).toHaveBeenCalledWith({
+				indexes: [''],
+				blobs: ['speech therapy', '', '', ''],
+				doubles: [0, 0, 0, 3],
+			});
+		});
+
+		it('records the visitor region the origin forwarded', async () => {
+			replyWithHits();
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			await dispatch(makeSearchRequest({ q: 'camps' }, { 'X-Visitor-Region': 'FL' }), { SEARCH_ANALYTICS });
+
+			expect(SEARCH_ANALYTICS.writeDataPoint.mock.calls[0][0].blobs[3]).toBe('FL');
+		});
+
+		it('does not forward X-Visitor-Region to Meilisearch', async () => {
+			fetchMock
+				.get(env.MEILI_HOST)
+				.intercept({ method: 'POST', path: '/indexes/listings/search' })
+				.reply(200, (req) => {
+					expect(req.headers['x-visitor-region']).toBeUndefined();
+					return JSON.stringify({ hits: [], estimatedTotalHits: 1 });
+				});
+
+			await dispatch(makeSearchRequest({ q: 'camps' }, { 'X-Visitor-Region': 'FL' }), { SEARCH_ANALYTICS: fakeDataset() });
+		});
+
+		it('does not log an articles search', async () => {
+			replyWithHits('/indexes/articles/search');
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			await dispatch(new Request(`${BASE}/indexes/articles/search`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ q: 'autism' }),
+			}), { SEARCH_ANALYTICS });
+
+			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
+		});
+
+		// Keyed on the header being present, not on the secret matching, so a
+		// rotated secret cannot spill provider searches into the demand log.
+		it('does not log a provider search whose bypass secret is stale', async () => {
+			replyWithHits();
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			await dispatch(
+				makeSearchRequest({ q: 'my listing' }, { 'X-Status-Bypass': 'rotated-away-secret' }),
+				{ SEARCH_ANALYTICS },
+			);
+
+			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
+		});
+
+		it('still returns results when the analytics binding is absent', async () => {
+			replyWithHits();
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }));
+
+			expect(response.status).toBe(200);
+			expect(JSON.parse(await response.text()).estimatedTotalHits).toBe(3);
+		});
+
+		it('still returns results when writing the data point throws', async () => {
+			replyWithHits();
+			const SEARCH_ANALYTICS = {
+				writeDataPoint: vi.fn(() => {
+					throw new Error('analytics engine is down');
+				}),
+			};
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }), { SEARCH_ANALYTICS });
+
+			expect(response.status).toBe(200);
+			expect(JSON.parse(await response.text()).estimatedTotalHits).toBe(3);
+		});
+
+		it('logs nothing when Meilisearch is unreachable', async () => {
+			fetchMock
+				.get(env.MEILI_HOST)
+				.intercept({ method: 'POST', path: '/indexes/listings/search' })
+				.replyWithError(new Error('connection refused'));
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }), { SEARCH_ANALYTICS });
+
+			expect(response.status).toBe(503);
+			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
 		});
 	});
 });

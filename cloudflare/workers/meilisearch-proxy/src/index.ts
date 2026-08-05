@@ -1,14 +1,14 @@
 /**
  * Meilisearch proxy worker - forwards search requests to Hetzner backend
- *
- * Keep src/index.ts identical to meilisearch-proxy-staging/src/index.ts;
- * only wrangler.jsonc (MEILI_HOST, route) differs between the two workers.
  */
+
+import { recordSearch, type SearchParams } from './search-log';
 
 interface Env {
 	MEILI_HOST: string;
 	MEILI_SEARCH_KEY: string;
 	MEILISEARCH_STATUS_BYPASS_KEY: string;
+	SEARCH_ANALYTICS?: AnalyticsEngineDataset;
 }
 
 const CORS_HEADERS = {
@@ -17,7 +17,7 @@ const CORS_HEADERS = {
 	'Access-Control-Allow-Headers': 'Content-Type, X-Status-Bypass',
 };
 
-const SEARCH_PATH = /^\/indexes\/[^/]+\/search$/;
+const SEARCH_PATH = /^\/indexes\/([^/]+)\/search$/;
 
 function isValidBypassSecret(request: Request, env: Env): boolean {
 	const header = request.headers.get('X-Status-Bypass') ?? '';
@@ -48,12 +48,14 @@ export default {
 		}
 
 		// Only the search endpoint is proxied; documents, settings, keys, etc. stay unreachable
-		if (!SEARCH_PATH.test(url.pathname)) {
+		const searchMatch = SEARCH_PATH.exec(url.pathname);
+		if (!searchMatch) {
 			return new Response('Not Found', {
 				status: 404,
 				headers: CORS_HEADERS
 			});
 		}
+		const indexName = searchMatch[1];
 
 		// POST only: GET search reads ?filter= from the querystring, which the
 		// body injection below never sees, so it could bypass the status filter
@@ -72,9 +74,14 @@ export default {
 			// Requests from the Next.js server-side proxy that include the bypass
 			// secret are allowed to search across all statuses.
 			const raw = await request.text();
+			const statusBypassed = isValidBypassSecret(request, env);
+			let searchParams: SearchParams | null = null;
 			let body = raw;
-			if (raw && !isValidBypassSecret(request, env)) {
+			if (raw && !statusBypassed) {
 				const parsed = JSON.parse(raw);
+				// Snapshot what the caller asked for, before the status filter is
+				// injected below. These three keys are all the query log ever reads.
+				searchParams = { q: parsed.q, filter: parsed.filter, sort: parsed.sort };
 				const existing = parsed.filter;
 				if (existing == null) {
 					parsed.filter = 'status = published';
@@ -99,6 +106,17 @@ export default {
 			// Fetch from Meilisearch
 			const response = await fetch(meiliRequest);
 			const data = await response.text();
+
+			// Deferred so neither the parsing nor the write sits on the search path,
+			// and so a failure in here can never reach the visitor.
+			ctx.waitUntil(Promise.resolve().then(() => recordSearch(env.SEARCH_ANALYTICS, {
+				indexName,
+				statusBypassRequested: request.headers.has('X-Status-Bypass'),
+				responseOk: response.ok,
+				searchParams,
+				responseText: data,
+				region: request.headers.get('X-Visitor-Region') ?? '',
+			})));
 
 			// Create response with caching headers
 			return new Response(data, {
