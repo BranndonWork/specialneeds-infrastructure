@@ -1,4 +1,5 @@
 import { stripIdentityHeaders } from './identity';
+import { toOriginUrl } from './origin';
 
 const DEFAULT_MAX_AGE = 300;  // fallback if Django sends no Cache-Control
 const DEFAULT_STALE_IF_ERROR = 86400;  // how long an expired entry is kept purely as an origin-down fallback
@@ -118,16 +119,7 @@ export async function fetchAndCache(
   const key = cacheable ? await cacheKey(request.url) : '';
   const cacheRequest = cacheable ? new Request(`https://cache.internal/${key}`) : null;
 
-  const origin = new URL(originUrl);
-  const target = new URL(request.url);
-  target.protocol = origin.protocol;
-  target.hostname = origin.hostname;
-  target.port = origin.port;
-
-  // Append trailing slash to avoid Django APPEND_SLASH 301 double round-trip
-  if (!target.pathname.endsWith('/')) {
-    target.pathname += '/';
-  }
+  const target = toOriginUrl(request.url, originUrl);
 
   const originHeaders = new Headers(request.headers);
   originHeaders.set('x-worker-origin-secret', originSecret);

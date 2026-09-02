@@ -2,6 +2,7 @@ import { checkRateLimit, rateLimitResponse } from './ratelimit';
 import { checkCache, fetchAndCache } from './cache';
 import { handleKvEndpoint } from './kv-endpoint';
 import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identity';
+import { toOriginUrl } from './origin';
 
 export interface Env {
   ORIGIN_URL: string;
@@ -18,14 +19,7 @@ export interface Env {
 }
 
 async function proxyToOrigin(request: Request, originUrl: string, originSecret: string, visitorIp: string | null): Promise<Response> {
-  const origin = new URL(originUrl);
-  const url = new URL(request.url);
-  url.protocol = origin.protocol;
-  url.hostname = origin.hostname;
-  url.port = origin.port;
-  if (!url.pathname.endsWith('/')) {
-    url.pathname += '/';
-  }
+  const url = toOriginUrl(request.url, originUrl);
   const headers = new Headers(request.headers);
   headers.set('x-worker-origin-secret', originSecret);
   stripIdentityHeaders(headers);
