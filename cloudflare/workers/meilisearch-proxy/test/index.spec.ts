@@ -56,9 +56,81 @@ describe('meilisearch-proxy', () => {
 			expect(response.status).toBe(404);
 		});
 
-		it('rejects /multi-search', async () => {
-			const response = await dispatch(new Request(`${BASE}/multi-search`, { method: 'POST' }));
+		it('rejects /multi-search with a trailing path', async () => {
+			const response = await dispatch(new Request(`${BASE}/multi-search/extra`, { method: 'POST' }));
 			expect(response.status).toBe(404);
+		});
+	});
+
+	describe('multi-search', () => {
+		function makeMultiSearchRequest(body: object, headers: Record<string, string> = {}): Request {
+			return new Request(`${BASE}/multi-search`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', ...headers },
+				body: JSON.stringify(body),
+			});
+		}
+
+		it('rejects GET with 405', async () => {
+			const response = await dispatch(new Request(`${BASE}/multi-search`));
+			expect(response.status).toBe(405);
+		});
+
+		it('rejects an empty body', async () => {
+			const response = await dispatch(new Request(`${BASE}/multi-search`, { method: 'POST' }));
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects a query without an index name', async () => {
+			const response = await dispatch(makeMultiSearchRequest({ queries: [{ q: 'autism' }] }));
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects a query whose index name carries a path', async () => {
+			const response = await dispatch(makeMultiSearchRequest({
+				queries: [{ indexUid: 'listings/documents', q: 'autism' }],
+			}));
+			expect(response.status).toBe(400);
+		});
+
+		it('injects status = published into every query', async () => {
+			fetchMock
+				.get(env.MEILI_HOST)
+				.intercept({ method: 'POST', path: '/multi-search' })
+				.reply(200, (req) => {
+					const body = JSON.parse(req.body as string);
+					expect(body.queries[0].filter).toEqual(['status = published', 'states_served_remotely IN [FL, ALL]']);
+					expect(body.queries[1].filter).toEqual(['status = published', '_geoRadius(25, -80, 40000)']);
+					return JSON.stringify({ results: [{ hits: [], estimatedTotalHits: 3 }, { hits: [], estimatedTotalHits: 9 }] });
+				});
+
+			const response = await dispatch(makeMultiSearchRequest({
+				queries: [
+					{ indexUid: 'listings', q: 'speech', filter: 'states_served_remotely IN [FL, ALL]' },
+					{ indexUid: 'listings', q: 'speech', filter: '_geoRadius(25, -80, 40000)', limit: 0 },
+				],
+			}));
+			expect(response.status).toBe(200);
+			const payload = await response.json() as { results: { estimatedTotalHits: number }[] };
+			expect(payload.results[1].estimatedTotalHits).toBe(9);
+		});
+
+		it('skips filter injection when bypass secret is correct', async () => {
+			fetchMock
+				.get(env.MEILI_HOST)
+				.intercept({ method: 'POST', path: '/multi-search' })
+				.reply(200, (req) => {
+					const body = JSON.parse(req.body as string);
+					expect(body.queries[0].filter).toBeUndefined();
+					expect(req.headers['x-status-bypass']).toBeUndefined();
+					return JSON.stringify({ results: [{ hits: [] }] });
+				});
+
+			const response = await dispatch(makeMultiSearchRequest(
+				{ queries: [{ indexUid: 'listings', q: 'draft' }] },
+				{ 'X-Status-Bypass': 'test-bypass-secret' },
+			));
+			expect(response.status).toBe(200);
 		});
 	});
 

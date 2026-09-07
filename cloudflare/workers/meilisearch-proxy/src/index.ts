@@ -18,6 +18,33 @@ const CORS_HEADERS = {
 };
 
 const SEARCH_PATH = /^\/indexes\/([^/]+)\/search$/;
+const MULTI_SEARCH_PATH = '/multi-search';
+const INDEX_NAME = /^[A-Za-z0-9_-]+$/;
+
+type SearchQuery = { indexUid?: unknown; q?: unknown; filter?: unknown; sort?: unknown };
+
+function isAllowedQuery(query: unknown): query is SearchQuery & { indexUid: string } {
+	return typeof query === 'object' && query !== null
+		&& typeof (query as SearchQuery).indexUid === 'string'
+		&& INDEX_NAME.test((query as SearchQuery).indexUid as string);
+}
+
+function snapshotSearchParams(query: SearchQuery): SearchParams {
+	return { q: query.q, filter: query.filter, sort: query.sort } as SearchParams;
+}
+
+// Public searches only ever see published records. The caller's own filter is kept and
+// ANDed after ours, whatever shape it came in.
+function injectPublishedFilter(query: SearchQuery): void {
+	const existing = query.filter;
+	if (existing == null) {
+		query.filter = 'status = published';
+	} else if (Array.isArray(existing)) {
+		query.filter = ['status = published', ...existing];
+	} else {
+		query.filter = ['status = published', existing];
+	}
+}
 
 function isValidBypassSecret(request: Request, env: Env): boolean {
 	const header = request.headers.get('X-Status-Bypass') ?? '';
@@ -47,15 +74,15 @@ export default {
 			});
 		}
 
-		// Only the search endpoint is proxied; documents, settings, keys, etc. stay unreachable
+		// Only the search endpoints are proxied; documents, settings, keys, etc. stay unreachable
 		const searchMatch = SEARCH_PATH.exec(url.pathname);
-		if (!searchMatch) {
+		const isMultiSearch = url.pathname === MULTI_SEARCH_PATH;
+		if (!searchMatch && !isMultiSearch) {
 			return new Response('Not Found', {
 				status: 404,
 				headers: CORS_HEADERS
 			});
 		}
-		const indexName = searchMatch[1];
 
 		// POST only: GET search reads ?filter= from the querystring, which the
 		// body injection below never sees, so it could bypass the status filter
@@ -77,19 +104,31 @@ export default {
 			const statusBypassed = isValidBypassSecret(request, env);
 			let searchParams: SearchParams | null = null;
 			let body = raw;
-			if (raw && !statusBypassed) {
+			let indexName = searchMatch ? searchMatch[1] : '';
+			if (isMultiSearch) {
+				// Every query in the batch names its own index, so each one is guarded the
+				// way a single search is: a valid index name, and the published filter.
+				const parsed = raw ? JSON.parse(raw) : null;
+				const queries = parsed?.queries;
+				if (!Array.isArray(queries) || queries.length === 0 || !queries.every(isAllowedQuery)) {
+					return new Response(JSON.stringify({ error: 'Invalid multi-search body' }), {
+						status: 400,
+						headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+					});
+				}
+				// The first query is the caller's own search; the rest are count siblings.
+				indexName = queries[0].indexUid;
+				if (!statusBypassed) {
+					searchParams = snapshotSearchParams(queries[0]);
+					queries.forEach(injectPublishedFilter);
+					body = JSON.stringify(parsed);
+				}
+			} else if (raw && !statusBypassed) {
 				const parsed = JSON.parse(raw);
 				// Snapshot what the caller asked for, before the status filter is
 				// injected below. These three keys are all the query log ever reads.
-				searchParams = { q: parsed.q, filter: parsed.filter, sort: parsed.sort };
-				const existing = parsed.filter;
-				if (existing == null) {
-					parsed.filter = 'status = published';
-				} else if (Array.isArray(existing)) {
-					parsed.filter = ['status = published', ...existing];
-				} else {
-					parsed.filter = ['status = published', existing];
-				}
+				searchParams = snapshotSearchParams(parsed);
+				injectPublishedFilter(parsed);
 				body = JSON.stringify(parsed);
 			}
 
@@ -114,7 +153,8 @@ export default {
 				statusBypassRequested: request.headers.has('X-Status-Bypass'),
 				responseOk: response.ok,
 				searchParams,
-				responseText: data,
+				// A multi-search answer nests one result per query; the log reads the caller's own.
+				responseText: isMultiSearch ? JSON.stringify(JSON.parse(data).results?.[0] ?? {}) : data,
 				region: request.headers.get('X-Visitor-Region') ?? '',
 			})));
 
