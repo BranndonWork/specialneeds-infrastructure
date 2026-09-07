@@ -1,6 +1,8 @@
 import { checkRateLimit, rateLimitResponse } from './ratelimit';
 import { checkCache, fetchAndCache } from './cache';
 import { handleKvEndpoint } from './kv-endpoint';
+import { handleRateLimitSlot } from './ratelimit-slot-endpoint';
+export { UpstreamSlot } from './upstream-slot';
 import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identity';
 import { toOriginUrl } from './origin';
 
@@ -9,6 +11,7 @@ export interface Env {
   RATE_LIMIT_KV: KVNamespace;
   CACHE_KV: KVNamespace;
   CROWDSEC_KV: KVNamespace;
+  UPSTREAM_SLOT: DurableObjectNamespace;
   CACHE_MGMT_TOKEN: string;
   WORKER_ORIGIN_SECRET: string;
   CF_API_TOKEN: string;
@@ -64,6 +67,16 @@ export default {
       if (decision === 'ban') {
         return new Response('Forbidden', { status: 403, headers: { 'X-Worker-Response-Time': `${Date.now() - start}ms` } });
       }
+    }
+
+    // Deployment-wide call slots for a named upstream (Nominatim today). Held open until the
+    // slot comes up, so it sits before the origin path and never reaches Django.
+    const slotResponse = await handleRateLimitSlot(request, env.UPSTREAM_SLOT, env.CACHE_MGMT_TOKEN);
+    if (slotResponse) {
+      console.log(`[ratelimit-slot] ${slotResponse.status} ${Date.now() - start}ms`);
+      const headers = new Headers(slotResponse.headers);
+      headers.set('X-Worker-Response-Time', `${Date.now() - start}ms`);
+      return new Response(slotResponse.body, { status: slotResponse.status, headers });
     }
 
     const t1 = Date.now();

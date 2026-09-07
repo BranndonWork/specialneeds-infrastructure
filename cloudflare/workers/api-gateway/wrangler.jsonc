@@ -15,6 +15,20 @@
 			"zone_name": "specialneeds.com"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "UPSTREAM_SLOT",
+				"class_name": "UpstreamSlot"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["UpstreamSlot"]
+		}
+	],
 	"kv_namespaces": [
 		{
 			"binding": "RATE_LIMIT_KV",
