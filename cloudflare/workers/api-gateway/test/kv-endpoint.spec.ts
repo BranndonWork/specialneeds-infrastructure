@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { apiPathToFrontendPaths, frontendPathsFor } from '../src/kv-endpoint';
+import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { cacheKey, checkCache } from '../src/cache';
+import { apiPathToFrontendPaths, frontendPathsFor, handleKvEndpoint } from '../src/kv-endpoint';
 
 // The site builds with trailingSlash: true — every emitted page path must end in "/".
 // Verified empirically 2026-07-05 against prod: both slash forms revalidate on the
@@ -68,5 +70,68 @@ describe('frontendPathsFor', () => {
 
 	it('returns no paths for unmapped API URLs', () => {
 		expect(frontendPathsFor('https://api.specialneeds.com/api/v1/articles/tags/')).toEqual([]);
+	});
+});
+
+// The publish flow re-warms an edited item with a PUT. Without the same storedAt/maxAge stamp an
+// origin fetch writes, checkCache treats the warmed entry as expired and the next request goes to
+// origin anyway, so the max-age the warmer sends would decide nothing (#615).
+describe('PUT /v1/cache?url= stores a warmed entry the way an origin fetch does', () => {
+	const THIRTY_DAYS = 'public, max-age=2592000, stale-if-error=86400';
+
+	async function warm(targetUrl: string, cacheControl: string): Promise<Response | null> {
+		const ctx = createExecutionContext();
+		const request = new Request(
+			`https://api.specialneeds.com/v1/cache?url=${encodeURIComponent(targetUrl)}` +
+				`&content_type=application/json&cache_control=${encodeURIComponent(cacheControl)}`,
+			{ method: 'PUT', body: '{"v":"warmed"}', headers: { 'X-Sn-Service-Token': env.CACHE_MGMT_TOKEN } },
+		);
+		const res = await handleKvEndpoint(
+			request, env.CACHE_KV, env.CACHE_MGMT_TOKEN, ctx, env.CF_API_TOKEN, env.REVALIDATE_SECRET, env.SN_SERVICE_TOKEN,
+		);
+		await waitOnExecutionContext(ctx);
+		return res;
+	}
+
+	function uniqueUrl(label: string): string {
+		return `https://api.specialneeds.com/api/v1/listings/display/${label}-${crypto.randomUUID()}/`;
+	}
+
+	it('stamps the max-age it was given, alongside the write time', async () => {
+		const url = uniqueUrl('warm-meta');
+		expect((await warm(url, THIRTY_DAYS))?.status).toBe(200);
+
+		const stored = await env.CACHE_KV.getWithMetadata<{ storedAt?: number; maxAge?: number; cacheControl?: string }>(
+			await cacheKey(url),
+			'text',
+		);
+
+		expect(stored.value).toBe('{"v":"warmed"}');
+		expect(stored.metadata?.maxAge).toBe(2592000);
+		expect(stored.metadata?.cacheControl).toBe(THIRTY_DAYS);
+		expect(stored.metadata?.storedAt).toBeTypeOf('number');
+	});
+
+	it('gives the KV key an expiry instead of writing it permanently', async () => {
+		const url = uniqueUrl('warm-ttl');
+		await warm(url, THIRTY_DAYS);
+
+		const key = await cacheKey(url);
+		const { keys } = await env.CACHE_KV.list();
+
+		expect(keys.find(k => k.name === key)?.expiration).toBeTypeOf('number');
+	});
+
+	it('is served as a KV hit by the next read', async () => {
+		const url = uniqueUrl('warm-served');
+		await warm(url, THIRTY_DAYS);
+
+		const ctx = createExecutionContext();
+		const res = await checkCache(new Request(url), env.CACHE_KV, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(res?.headers.get('X-Cache')).toBe('KV-HIT');
+		expect(res?.headers.get('Cache-Control')).toBe(THIRTY_DAYS);
+		expect(await res?.text()).toBe('{"v":"warmed"}');
 	});
 });

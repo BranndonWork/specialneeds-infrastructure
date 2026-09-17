@@ -147,3 +147,93 @@ describe('writes record what is needed to expire the entry', () => {
 		expect(await read(url)).toBeNull();
 	});
 });
+
+// A DELETE evicts L1 only at the PoP that handles it, and the serving PoP (Vercel, Virginia) is
+// never the deleting one (Celery, Frankfurt). Capping L1 keeps every other PoP within a minute of
+// an edit while KV still holds the entry for the origin's full max-age (#615).
+describe('L1 holds an entry for at most 60 seconds regardless of the origin max-age', () => {
+	beforeAll(() => {
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+	});
+	afterEach(() => fetchMock.assertNoPendingInterceptors());
+
+	const THIRTY_DAYS = 'public, max-age=2592000, stale-if-error=86400';
+
+	async function l1Entry(url: string): Promise<Response | undefined> {
+		return caches.default.match(new Request(`https://cache.internal/${await cacheKey(url)}`));
+	}
+
+	async function writeThroughOrigin(url: string): Promise<Response> {
+		fetchMock
+			.get('https://origin.test')
+			.intercept({ path: new URL(url).pathname })
+			.reply(200, '{"v":"from-origin"}', {
+				headers: { 'Content-Type': 'application/json', 'Cache-Control': THIRTY_DAYS },
+			});
+
+		const ctx = createExecutionContext();
+		const res = await fetchAndCache(new Request(url), env.ORIGIN_URL, env.CACHE_KV, ctx, 'test-origin-secret', null);
+		await waitOnExecutionContext(ctx);
+		return res;
+	}
+
+	it('caps the L1 copy written on an origin fetch', async () => {
+		const url = uniqueUrl('l1-cap-origin');
+		await writeThroughOrigin(url);
+
+		expect((await l1Entry(url))?.headers.get('Cache-Control')).toBe('public, max-age=60');
+	});
+
+	it('keeps the full max-age in KV on an origin fetch', async () => {
+		const url = uniqueUrl('l1-cap-kv-meta');
+		await writeThroughOrigin(url);
+
+		const stored = await env.CACHE_KV.getWithMetadata<{ maxAge?: number; cacheControl?: string }>(
+			await cacheKey(url),
+			'text',
+		);
+
+		expect(stored.metadata?.maxAge).toBe(2592000);
+		expect(stored.metadata?.cacheControl).toBe(THIRTY_DAYS);
+	});
+
+	it('returns the origin max-age to the caller on an origin fetch', async () => {
+		const url = uniqueUrl('l1-cap-origin-response');
+		const res = await writeThroughOrigin(url);
+
+		expect(res.headers.get('Cache-Control')).toBe(THIRTY_DAYS);
+	});
+
+	it('caps the L1 copy written on a KV hit', async () => {
+		const url = uniqueUrl('l1-cap-kv-hit');
+		await seedKv(url, '{"v":"kv"}', {
+			contentType: 'application/json',
+			cacheControl: THIRTY_DAYS,
+			storedAt: Date.now(),
+			maxAge: 2592000,
+		});
+
+		const res = await read(url);
+
+		expect(res?.headers.get('X-Cache')).toBe('KV-HIT');
+		expect((await l1Entry(url))?.headers.get('Cache-Control')).toBe('public, max-age=60');
+	});
+
+	it('returns the origin max-age to the caller on an L1 hit', async () => {
+		const url = uniqueUrl('l1-cap-l1-hit');
+		await seedKv(url, '{"v":"kv"}', {
+			contentType: 'application/json',
+			cacheControl: THIRTY_DAYS,
+			storedAt: Date.now(),
+			maxAge: 2592000,
+		});
+		await read(url);
+
+		const res = await read(url);
+
+		expect(res?.headers.get('X-Cache')).toBe('HIT');
+		expect(res?.headers.get('Cache-Control')).toBe(THIRTY_DAYS);
+		expect(res?.headers.get('X-Origin-Cache-Control')).toBeNull();
+	});
+});

@@ -4,6 +4,11 @@ import { toOriginUrl } from './origin';
 const DEFAULT_MAX_AGE = 300;  // fallback if Django sends no Cache-Control
 const DEFAULT_STALE_IF_ERROR = 86400;  // how long an expired entry is kept purely as an origin-down fallback
 const KV_MIN_TTL = 60;  // Cloudflare KV rejects expirationTtl below 60s
+// L1 is per PoP and a DELETE evicts it only at the PoP that handles the DELETE, so every other
+// PoP ages an entry out on its own. The cap bounds that staleness to a minute after an edit while
+// KV keeps the entry for the origin's full max-age.
+const L1_MAX_AGE = 60;
+const ORIGIN_CACHE_CONTROL_HEADER = 'X-Origin-Cache-Control';
 
 interface CacheMeta {
   contentType: string;
@@ -18,6 +23,44 @@ interface CacheMeta {
 function isFresh(meta: CacheMeta | null | undefined): boolean {
   if (!meta?.storedAt || meta.maxAge === undefined) return false;
   return (Date.now() - meta.storedAt) / 1000 < meta.maxAge;
+}
+
+// The origin's own Cache-Control rides along so an L1 hit can answer with it instead of the cap.
+function toL1Response(body: string, contentType: string, cacheControl: string): Response {
+  return new Response(body, {
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': `public, max-age=${L1_MAX_AGE}`,
+      [ORIGIN_CACHE_CONTROL_HEADER]: cacheControl,
+    },
+  });
+}
+
+function fromL1Response(l1: Response): Response {
+  const headers = new Headers(l1.headers);
+  const originCacheControl = headers.get(ORIGIN_CACHE_CONTROL_HEADER);
+  if (originCacheControl) {
+    headers.set('Cache-Control', originCacheControl);
+    headers.delete(ORIGIN_CACHE_CONTROL_HEADER);
+  }
+  headers.set('X-Cache', 'HIT');
+  return new Response(l1.body, { status: l1.status, statusText: l1.statusText, headers });
+}
+
+// The one KV writer, shared by the origin-fetch path and the warming PUT: every entry carries the
+// storedAt and maxAge that isFresh reads and an expiry, so no path can write a permanent copy.
+export async function putCacheEntry(
+  cacheKv: KVNamespace,
+  key: string,
+  body: string,
+  contentType: string,
+  cacheControl: string,
+): Promise<void> {
+  const { maxAge, staleIfError } = parseCacheControl(cacheControl);
+  await cacheKv.put(key, body, {
+    expirationTtl: Math.max(maxAge + staleIfError, KV_MIN_TTL),
+    metadata: { contentType, cacheControl, storedAt: Date.now(), maxAge },
+  });
 }
 
 export async function cacheKey(url: string): Promise<string> {
@@ -49,12 +92,6 @@ function isCacheable(request: Request): boolean {
   return request.method === 'GET';
 }
 
-function withHeader(response: Response, key: string, value: string): Response {
-  const headers = new Headers(response.headers);
-  headers.set(key, value);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-}
-
 export async function checkCache(
   request: Request,
   cacheKv: KVNamespace,
@@ -66,14 +103,14 @@ export async function checkCache(
   const key = await cacheKey(request.url);
   const cacheRequest = new Request(`https://cache.internal/${key}`);
 
-  // L1 — Cache API (per-PoP, respects Cache-Control TTL from stored response)
+  // L1 — Cache API (per-PoP, capped at L1_MAX_AGE)
   const t1 = Date.now();
   const l1 = await caches.default.match(cacheRequest);
   console.log(`[cache:l1] ${l1 ? 'HIT' : 'MISS'} ${Date.now() - t1}ms`);
   if (l1) {
     const kvCheck = await cacheKv.get(key);
     if (kvCheck !== null) {
-      return withHeader(l1, 'X-Cache', 'HIT');
+      return fromL1Response(l1);
     }
     // KV was invalidated — L1 is stale, evict it and fall through
     console.log(`[cache:l1-stale] KV invalidated, evicting L1`);
@@ -91,16 +128,13 @@ export async function checkCache(
     return null;
   }
   if (stored.value) {
-    const kvResponse = new Response(stored.value, {
-      headers: {
-        'Content-Type': stored.metadata?.contentType ?? 'application/json',
-        'Cache-Control': stored.metadata?.cacheControl ?? `public, max-age=${DEFAULT_MAX_AGE}`,
-        'X-Cache': 'KV-HIT',
-      },
-    });
-    ctx.waitUntil(caches.default.put(cacheRequest, kvResponse.clone()));
+    const contentType = stored.metadata?.contentType ?? 'application/json';
+    const cacheControl = stored.metadata?.cacheControl ?? `public, max-age=${DEFAULT_MAX_AGE}`;
+    ctx.waitUntil(caches.default.put(cacheRequest, toL1Response(stored.value, contentType, cacheControl)));
     console.log(`[cache] KV-HIT ${Date.now() - t0}ms`);
-    return kvResponse;
+    return new Response(stored.value, {
+      headers: { 'Content-Type': contentType, 'Cache-Control': cacheControl, 'X-Cache': 'KV-HIT' },
+    });
   }
 
   console.log(`[cache] MISS ${Date.now() - t0}ms`);
@@ -164,26 +198,17 @@ export async function fetchAndCache(
   }
 
   if (cacheable && res.ok) {
-    const { cacheable: shouldCache, maxAge, staleIfError } = parseCacheControl(res.headers.get('Cache-Control'));
+    const originCacheControl = res.headers.get('Cache-Control');
+    const { cacheable: shouldCache, maxAge } = parseCacheControl(originCacheControl);
 
     if (shouldCache && maxAge > 0) {
       const body = await res.text();
       const contentType = res.headers.get('Content-Type') ?? 'application/json';
-      const cacheControl = `public, max-age=${maxAge}`;
-      const toCache = new Response(body, {
-        headers: {
-          'Content-Type': contentType,
-          'Cache-Control': cacheControl,
-          'X-Cache': 'MISS',
-        },
-      });
+      const cacheControl = originCacheControl ?? `public, max-age=${maxAge}`;
       ctx.waitUntil(
         Promise.all([
-          caches.default.put(cacheRequest!, toCache.clone()),
-          cacheKv.put(key, body, {
-            expirationTtl: Math.max(maxAge + staleIfError, KV_MIN_TTL),
-            metadata: { contentType, cacheControl, storedAt: Date.now(), maxAge },
-          }),
+          caches.default.put(cacheRequest!, toL1Response(body, contentType, cacheControl)),
+          putCacheEntry(cacheKv, key, body, contentType, cacheControl),
         ])
           .then(() => console.log(`[cache:write] l1+l2 ok key=${key.slice(0, 12)}`))
           .catch((err) => console.log(`[cache:write] error: ${err}`))

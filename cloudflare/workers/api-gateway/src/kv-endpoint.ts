@@ -1,4 +1,4 @@
-import { cacheKey } from './cache';
+import { cacheKey, putCacheEntry } from './cache';
 
 const CF_ZONE_ID = '3df33cbd8f514275c7074407989b5b12';
 const REVALIDATE_URL = 'https://www.specialneeds.com/api/admin/revalidate/';
@@ -133,7 +133,7 @@ export async function handleKvEndpoint(
         const body = await request.text();
         const contentType = url.searchParams.get('content_type') ?? 'application/json';
         const cacheControl = url.searchParams.get('cache_control') ?? 'public, max-age=3600';
-        await kv.put(hash, body, { metadata: { contentType, cacheControl } });
+        await putCacheEntry(kv, hash, body, contentType, cacheControl);
         return new Response('OK');
       }
       case 'DELETE': {
