@@ -55,5 +55,9 @@
     project_src: /opt/observability
     files:
       - docker-compose.observability.yml
+    # The openobserve service reads ${OPENOBSERVE_EMAIL} and ${OPENOBSERVE_PASSWORD} by
+    # compose interpolation, which only sees this file when it is passed explicitly.
+    env_files:
+      - .env.observability
     project_name: observability
     state: present
