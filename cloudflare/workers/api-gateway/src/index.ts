@@ -5,6 +5,7 @@ import { handleRateLimitSlot } from './ratelimit-slot-endpoint';
 export { UpstreamSlot } from './upstream-slot';
 import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identity';
 import { toOriginUrl } from './origin';
+import { requiresVerifiedIdentity } from './send-paths';
 
 export interface Env {
   ORIGIN_URL: string;
@@ -86,6 +87,14 @@ export default {
       const headers = new Headers(kvResponse.headers);
       headers.set('X-Worker-Response-Time', `${Date.now() - start}ms`);
       return new Response(kvResponse.body, { status: kvResponse.status, statusText: kvResponse.statusText, headers });
+    }
+
+    if (requiresVerifiedIdentity(method, pathname) && !identity.verified) {
+      console.log(`[identity-gate] rejected ${method} ${pathname} identity=${identity.value}`);
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json', 'X-Worker-Response-Time': `${Date.now() - start}ms` },
+      });
     }
 
     // No S2S exemption here: the www /api/* proxy routes forward PUBLIC requests with the S2S

@@ -1,10 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { checkRateLimit } from '../src/ratelimit';
+import { checkRateLimit, getTier } from '../src/ratelimit';
 import { RENDER_IDENTITY } from '../src/identity';
+
+const LISTING_ID = '3f2b8c1e-9a4d-4e6f-8b2a-1c3d5e7f9a0b';
 
 const BROWSE_URL = 'https://api.test/api/v1/listings/display/education/schools/a-school/';
 const AUTH_URL = 'https://api.test/api/v1/token/';
 const GENERAL_URL = 'https://api.test/api/v1/anything-else/';
+const LOGIN_URL = 'https://api.test/api/v1/user/login/';
+const SIGNUP_URL = 'https://api.test/api/v1/listings/signup/';
+const CLAIM_URL = `https://api.test/api/v1/listings/${LISTING_ID}/claim/`;
+
+const POST: RequestInit = { method: 'POST' };
 
 // caches.default backs the counters and is shared across the pool worker, so every case needs
 // its own identity string or counters bleed between tests.
@@ -12,13 +19,50 @@ function uniqueIdentity(label: string): string {
 	return `${label}-${crypto.randomUUID()}`;
 }
 
-async function hitTimes(url: string, identity: string, times: number): Promise<boolean[]> {
+async function hitTimes(url: string, identity: string, times: number, init?: RequestInit): Promise<boolean[]> {
 	const results: boolean[] = [];
 	for (let i = 0; i < times; i++) {
-		results.push((await checkRateLimit(new Request(url), identity)).limited);
+		results.push((await checkRateLimit(new Request(url, init), identity)).limited);
 	}
 	return results;
 }
+
+describe('getTier', () => {
+	it.each([
+		'/api/v1/user/login/',
+		'/api/v1/user/login',
+		'/api/v1/listings/signup/',
+		'/api/v1/listings/signup',
+		`/api/v1/listings/${LISTING_ID}/claim/`,
+		`/api/v1/listings/${LISTING_ID}/claim`,
+	])('puts POST %s on the send tier', (pathname) => {
+		expect(getTier('POST', pathname)).toBe('send');
+	});
+
+	it('matches the path Django routes, so a percent-encoded letter still lands on the send tier', () => {
+		expect(getTier('POST', '/api/v1/user/logi%6e/')).toBe('send');
+		expect(getTier('POST', '/api/v1/listings/signu%70/')).toBe('send');
+	});
+
+	it.each([
+		['POST', '/api/v1/user/login/extra/', 'general'],
+		['POST', '/api/v1/user/loginx/', 'general'],
+		['POST', '/prefix/api/v1/user/login/', 'general'],
+		['GET', '/api/v1/user/login/', 'general'],
+		['GET', '/api/v1/listings/signup/', 'browse'],
+		['POST', '/api/v1/listings/signup/extra/', 'browse'],
+		['GET', `/api/v1/listings/${LISTING_ID}/claim/`, 'browse'],
+		['POST', `/api/v1/listings/${LISTING_ID}/claims/`, 'browse'],
+		['POST', `/api/v1/listings/${LISTING_ID}/claims/pending/`, 'browse'],
+		['POST', `/api/v1/listings/${LISTING_ID}/claim/extra/`, 'browse'],
+		['POST', '/api/v1/listings/not-a-uuid/claim/', 'browse'],
+		['POST', '/api/v1/listings/claims/self-claim/confirm/', 'browse'],
+		['POST', '/api/v1/token/', 'auth'],
+		['POST', '/api/v1/token/refresh/', 'auth'],
+	])('keeps %s %s on the %s tier', (method, pathname, tier) => {
+		expect(getTier(method, pathname)).toBe(tier);
+	});
+});
 
 describe('checkRateLimit identity keying', () => {
 	it('gives two different verified visitor IPs separate counters', async () => {
@@ -85,5 +129,25 @@ describe('checkRateLimit tiers', () => {
 		expect((await checkRateLimit(new Request(AUTH_URL), identity)).limited).toBe(true);
 
 		expect((await checkRateLimit(new Request(BROWSE_URL), identity)).limited).toBe(false);
+	});
+
+	it('limits send POSTs at 30 per window with a 600s block, one counter across login, signup, and claim', async () => {
+		const identity = uniqueIdentity('send-tier');
+		expect(await hitTimes(LOGIN_URL, identity, 10, POST)).not.toContain(true);
+		expect(await hitTimes(SIGNUP_URL, identity, 10, POST)).not.toContain(true);
+		expect(await hitTimes(CLAIM_URL, identity, 10, POST)).not.toContain(true);
+
+		const limited = await checkRateLimit(new Request(LOGIN_URL, POST), identity);
+		expect(limited.limited).toBe(true);
+		expect(limited.retryAfter).toBe(600);
+	});
+
+	it('keeps the send tier off the auth counter, so token refresh survives a blocked login', async () => {
+		const identity = uniqueIdentity('send-vs-auth');
+		expect(await hitTimes(LOGIN_URL, identity, 30, POST)).not.toContain(true);
+		expect((await checkRateLimit(new Request(LOGIN_URL, POST), identity)).limited).toBe(true);
+
+		expect((await checkRateLimit(new Request('https://api.test/api/v1/token/refresh/', POST), identity)).limited).toBe(false);
+		expect((await checkRateLimit(new Request(CLAIM_URL), identity)).limited).toBe(false);
 	});
 });

@@ -1,21 +1,26 @@
 import { RENDER_IDENTITY } from './identity';
+import { isSendRequest } from './send-paths';
 
 export interface RateLimitResult {
   limited: boolean;
   retryAfter?: number;
 }
 
+// send: a login code dies after 5 wrong guesses, so one failed round is 6 requests. 30 per
+// window lets someone who mistypes badly never meet the limit.
 const TIERS = {
-  auth:    { limit: 5,   windowSeconds: 60, blockSeconds: 600 },
-  browse:  { limit: 60,  windowSeconds: 60, blockSeconds: 60 },
-  general: { limit: 120, windowSeconds: 60, blockSeconds: 60 },
-  render:  { limit: 300, windowSeconds: 60, blockSeconds: 60 },
+  auth:    { limit: 5,   windowSeconds: 60,  blockSeconds: 600 },
+  send:    { limit: 30,  windowSeconds: 600, blockSeconds: 600 },
+  browse:  { limit: 60,  windowSeconds: 60,  blockSeconds: 60 },
+  general: { limit: 120, windowSeconds: 60,  blockSeconds: 60 },
+  render:  { limit: 300, windowSeconds: 60,  blockSeconds: 60 },
 } as const;
 
 type TierName = keyof typeof TIERS;
 
-function getTier(pathname: string): TierName {
+export function getTier(method: string, pathname: string): TierName {
   if (pathname.startsWith('/api/v1/token/')) return 'auth';
+  if (isSendRequest(method, pathname)) return 'send';
   if (pathname.includes('/api/v1/listings/') || pathname.includes('/api/v1/articles/')) return 'browse';
   return 'general';
 }
@@ -51,7 +56,7 @@ export async function checkRateLimit(
   const pathname = new URL(request.url).pathname;
   // Server-side render fetches are one trusted caller doing many requests: their own tier,
   // regardless of which paths they happen to hit.
-  const tier = identity === RENDER_IDENTITY ? 'render' : getTier(pathname);
+  const tier = identity === RENDER_IDENTITY ? 'render' : getTier(request.method, pathname);
   const config = TIERS[tier];
   const now = Math.floor(Date.now() / 1000);
 

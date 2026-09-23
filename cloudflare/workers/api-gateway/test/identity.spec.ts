@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { env, SELF, fetchMock } from 'cloudflare:test';
 import { resolveIdentity, RENDER_IDENTITY } from '../src/identity';
 import type { Env } from '../src/index';
+import { hmacHex } from './hmac';
 
 const testEnv = env as unknown as Env;
 
@@ -10,20 +11,6 @@ const PRIMARY = 'test-identity-signing-secret';
 const PREVIOUS = 'test-identity-signing-secret-previous';
 
 const DEFAULT_URL = 'https://api.test/api/v1/listings/display/education/schools/a-school/';
-
-async function hmacHex(secret: string, message: string): Promise<string> {
-	const key = await crypto.subtle.importKey(
-		'raw',
-		new TextEncoder().encode(secret),
-		{ name: 'HMAC', hash: 'SHA-256' },
-		false,
-		['sign'],
-	);
-	const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
-	return Array.from(new Uint8Array(mac))
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
-}
 
 function nowSeconds(): number {
 	return Math.floor(Date.now() / 1000);
