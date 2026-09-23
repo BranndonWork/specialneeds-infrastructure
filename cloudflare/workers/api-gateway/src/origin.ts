@@ -13,6 +13,17 @@ function originPathname(pathname: string): string {
   return `${pathname}/`;
 }
 
+// The origin server percent-decodes the path before Django routes it, so `/api/v1/toke%6e/` reaches
+// the token view. Anything that decides by path matches this, never the raw pathname, or an
+// encoded letter moves a request onto a looser tier or past a gate.
+export function routedPath(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
 // Both origin paths — the cached GET fetch and the pass-through proxy — address the origin
 // through here, so the slash rule cannot drift between them.
 export function toOriginUrl(requestUrl: string, originBase: string): URL {

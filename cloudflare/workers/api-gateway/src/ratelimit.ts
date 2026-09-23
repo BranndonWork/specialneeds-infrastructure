@@ -1,4 +1,5 @@
 import { RENDER_IDENTITY } from './identity';
+import { routedPath } from './origin';
 import { isSendRequest } from './send-paths';
 
 export interface RateLimitResult {
@@ -19,9 +20,10 @@ const TIERS = {
 type TierName = keyof typeof TIERS;
 
 export function getTier(method: string, pathname: string): TierName {
-  if (pathname.startsWith('/api/v1/token/')) return 'auth';
   if (isSendRequest(method, pathname)) return 'send';
-  if (pathname.includes('/api/v1/listings/') || pathname.includes('/api/v1/articles/')) return 'browse';
+  const path = routedPath(pathname);
+  if (path.startsWith('/api/v1/token/')) return 'auth';
+  if (path.includes('/api/v1/listings/') || path.includes('/api/v1/articles/')) return 'browse';
   return 'general';
 }
 

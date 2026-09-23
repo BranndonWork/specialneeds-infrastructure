@@ -1,3 +1,5 @@
+import { routedPath } from './origin';
+
 // The POSTs that make the API email an address the caller typed: a login code, a signup
 // verification, a claim verification. Anchored so a neighbouring path never matches, with the
 // trailing slash optional because the gateway appends it on the way to origin.
@@ -5,16 +7,6 @@ const LOGIN_PATH = /^\/api\/v1\/user\/login\/?$/;
 const SIGNUP_PATH = /^\/api\/v1\/listings\/signup\/?$/;
 // The id segment is Django's <uuid:> converter, which accepts lowercase hex only.
 const CLAIM_PATH = /^\/api\/v1\/listings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/claim\/?$/;
-
-// The origin server percent-decodes the path before Django routes it, so `/signu%70/` reaches the
-// signup view. Matching the raw path would let that spelling past both the tier and the gate.
-function routedPath(pathname: string): string {
-  try {
-    return decodeURIComponent(pathname);
-  } catch {
-    return pathname;
-  }
-}
 
 function isSignupOrClaim(path: string): boolean {
   return SIGNUP_PATH.test(path) || CLAIM_PATH.test(path);

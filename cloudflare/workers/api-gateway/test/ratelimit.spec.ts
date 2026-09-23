@@ -62,6 +62,15 @@ describe('getTier', () => {
 	])('keeps %s %s on the %s tier', (method, pathname, tier) => {
 		expect(getTier(method, pathname)).toBe(tier);
 	});
+
+	it.each([
+		['POST', '/api/v1/toke%6e/', 'auth'],
+		['POST', '/api/v1/token/refres%68/', 'auth'],
+		['GET', '/api/v1/listing%73/display/education/schools/a-school/', 'browse'],
+		['GET', '/api/v1/listings/display/education/schools/caf%C3%A9/', 'browse'],
+	])('matches %s %s on the decoded path Django routes, landing on %s', (method, pathname, tier) => {
+		expect(getTier(method, pathname)).toBe(tier);
+	});
 });
 
 describe('checkRateLimit identity keying', () => {
