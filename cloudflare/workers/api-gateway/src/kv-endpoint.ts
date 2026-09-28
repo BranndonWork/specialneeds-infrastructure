@@ -59,8 +59,13 @@ export function frontendPathsFor(targetUrl: string): string[] {
   return apiPathToFrontendPaths(url.pathname);
 }
 
-async function revalidateNextJs(targetUrl: string, revalidateSecret: string, snServiceToken: string): Promise<void> {
-  const paths = frontendPathsFor(targetUrl);
+async function revalidateNextJs(
+  targetUrl: string,
+  revalidateSecret: string,
+  snServiceToken: string,
+  skipHome = false,
+): Promise<void> {
+  const paths = frontendPathsFor(targetUrl).filter((path) => !(skipHome && path === '/'));
   if (paths.length === 0) {
     console.log(`[revalidate-isr] skipped — no frontend mapping for ${new URL(targetUrl).pathname}`);
     return;
@@ -118,7 +123,7 @@ export async function handleKvEndpoint(
     );
   }
 
-  // Cache management — HEAD|PUT|DELETE /v1/cache?url=<encoded-url>
+  // Cache management — HEAD|PUT|DELETE /v1/cache?url=<encoded-url>[&skip_home=true]
   if (url.pathname === '/v1/cache' && url.searchParams.has('url')) {
     const targetUrl = url.searchParams.get('url')!;
     const hash = await cacheKey(targetUrl);
@@ -144,7 +149,9 @@ export async function handleKvEndpoint(
           caches.default.delete(new Request(`https://cache.internal/${hash}`)),
         ]);
         if (isApiUrl && cfApiToken) ctx.waitUntil(purgeCfCdn(targetUrl, cfApiToken));
-        if (revalidateSecret) ctx.waitUntil(revalidateNextJs(targetUrl, revalidateSecret, snServiceToken));
+        // skip_home=true: a bulk resave leaves the homepage to the next ordinary save.
+        const skipHome = url.searchParams.get('skip_home') === 'true';
+        if (revalidateSecret) ctx.waitUntil(revalidateNextJs(targetUrl, revalidateSecret, snServiceToken, skipHome));
         return new Response('OK');
       }
       default:

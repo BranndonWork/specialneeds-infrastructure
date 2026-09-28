@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { env, createExecutionContext, waitOnExecutionContext, fetchMock } from 'cloudflare:test';
 import { cacheKey, checkCache } from '../src/cache';
 import { apiPathToFrontendPaths, frontendPathsFor, handleKvEndpoint } from '../src/kv-endpoint';
 
@@ -133,5 +133,49 @@ describe('PUT /v1/cache?url= stores a warmed entry the way an origin fetch does'
 		expect(res?.headers.get('X-Cache')).toBe('KV-HIT');
 		expect(res?.headers.get('Cache-Control')).toBe(THIRTY_DAYS);
 		expect(await res?.text()).toBe('{"v":"warmed"}');
+	});
+});
+
+// A bulk resave purges thousands of listing pages. Each API display purge also revalidates the
+// homepage, so the caller can ask the Worker to leave it out with skip_home=true (#723).
+describe('DELETE /v1/cache?url= revalidates the pages built from the URL', () => {
+	beforeAll(() => {
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+	});
+	afterEach(() => fetchMock.assertNoPendingInterceptors());
+
+	async function purge(query: string): Promise<string[]> {
+		let revalidated: string[] = [];
+		fetchMock.get('https://api.cloudflare.com').intercept({ path: /purge_cache/, method: 'POST' }).reply(200, '{}');
+		fetchMock
+			.get('https://www.specialneeds.com')
+			.intercept({ path: '/api/admin/revalidate/', method: 'POST' })
+			.reply(200, (opts) => {
+				revalidated = JSON.parse(String(opts.body)).paths;
+				return '{}';
+			});
+
+		const ctx = createExecutionContext();
+		const request = new Request(`https://api.specialneeds.com/v1/cache?${query}`, {
+			method: 'DELETE',
+			headers: { 'X-Sn-Service-Token': env.CACHE_MGMT_TOKEN },
+		});
+		const res = await handleKvEndpoint(
+			request, env.CACHE_KV, env.CACHE_MGMT_TOKEN, ctx, env.CF_API_TOKEN, env.REVALIDATE_SECRET, env.SN_SERVICE_TOKEN,
+		);
+		await waitOnExecutionContext(ctx);
+		expect(res?.status).toBe(200);
+		return revalidated;
+	}
+
+	const listingUrl = encodeURIComponent('https://api.specialneeds.com/api/v1/listings/display/care/in-home/some-provider/');
+
+	it('revalidates the listing page and the homepage by default', async () => {
+		expect(await purge(`url=${listingUrl}`)).toEqual(['/directory/care/in-home/some-provider/', '/']);
+	});
+
+	it('leaves the homepage out when skip_home=true', async () => {
+		expect(await purge(`url=${listingUrl}&skip_home=true`)).toEqual(['/directory/care/in-home/some-provider/']);
 	});
 });
