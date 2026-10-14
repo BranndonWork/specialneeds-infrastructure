@@ -6,6 +6,7 @@ export { UpstreamSlot } from './upstream-slot';
 import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identity';
 import { toOriginUrl } from './origin';
 import { requiresVerifiedIdentity } from './send-paths';
+import { isScannerBlockCandidate, isScannerBlocked, recordNotFound } from './scanner-block';
 
 export interface Env {
   ORIGIN_URL: string;
@@ -70,6 +71,12 @@ export default {
       }
     }
 
+    const scannerCandidate = isScannerBlockCandidate(request, identity);
+    if (scannerCandidate && await isScannerBlocked(identity.value)) {
+      console.log(`[scanner-block] rejected identity=${identity.value}`);
+      return new Response('Forbidden', { status: 403, headers: { 'X-Worker-Response-Time': `${Date.now() - start}ms` } });
+    }
+
     // Deployment-wide call slots for a named upstream (Nominatim today). Held open until the
     // slot comes up, so it sits before the origin path and never reaches Django.
     const slotResponse = await handleRateLimitSlot(request, env.UPSTREAM_SLOT, env.CACHE_MGMT_TOKEN);
@@ -132,6 +139,8 @@ export default {
       response = await proxyToOrigin(request, env.ORIGIN_URL, env.WORKER_ORIGIN_SECRET, visitorIp);
       console.log(`[origin-proxy] status=${response.status} ${Date.now() - t4}ms`);
     }
+
+    if (scannerCandidate && response.status === 404) await recordNotFound(identity.value);
 
     if (response.status >= 500) {
       console.log(`[total] error=${response.status} ${Date.now() - start}ms`);
