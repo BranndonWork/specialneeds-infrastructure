@@ -114,26 +114,39 @@ export default {
     // and unforgeable without the signing secret. A visitor cannot attach one to public
     // traffic, so the www proxy can name its own render fetches without also handing every
     // request it forwards a free pass.
-    const t2 = Date.now();
-    const rlResult = await checkRateLimit(request, identity.value);
-    console.log(`[rate-limit] limited=${rlResult.limited} ${Date.now() - t2}ms`);
-    if (rlResult.limited) return rateLimitResponse(rlResult.retryAfter!);
+    const enforceRateLimit = async (): Promise<Response | null> => {
+      const t2 = Date.now();
+      const rlResult = await checkRateLimit(request, identity.value);
+      console.log(`[rate-limit] limited=${rlResult.limited} ${Date.now() - t2}ms`);
+      return rlResult.limited ? rateLimitResponse(rlResult.retryAfter!) : null;
+    };
+
+    // The render bucket guards Django, and all site rendering shares it. A render answered from
+    // the gateway cache never reaches Django, so only render cache misses count, and a crawler
+    // burst cannot turn already-cached pages into 429s. Visitors still meet the limit first.
+    if (!isRender) {
+      const limited = await enforceRateLimit();
+      if (limited) return limited;
+    }
 
     let response: Response;
 
-    const bypassCache = request.headers.has('authorization');
+    const useCache = method === 'GET' && !request.headers.has('authorization');
+    const t3 = Date.now();
+    const cached = useCache ? await checkCache(request, env.CACHE_KV, ctx) : null;
 
-    if (method === 'GET' && !bypassCache) {
-      const t3 = Date.now();
-      const cached = await checkCache(request, env.CACHE_KV, ctx);
-      if (cached) {
-        console.log(`[cache-hit] ${Date.now() - t3}ms`);
-        response = cached;
-      } else {
-        const t4 = Date.now();
-        response = await fetchAndCache(request, env.ORIGIN_URL, env.CACHE_KV, ctx, env.WORKER_ORIGIN_SECRET, visitorIp);
-        console.log(`[origin-fetch] status=${response.status} ${Date.now() - t4}ms`);
-      }
+    if (!cached && isRender) {
+      const limited = await enforceRateLimit();
+      if (limited) return limited;
+    }
+
+    if (cached) {
+      console.log(`[cache-hit] ${Date.now() - t3}ms`);
+      response = cached;
+    } else if (useCache) {
+      const t4 = Date.now();
+      response = await fetchAndCache(request, env.ORIGIN_URL, env.CACHE_KV, ctx, env.WORKER_ORIGIN_SECRET, visitorIp);
+      console.log(`[origin-fetch] status=${response.status} ${Date.now() - t4}ms`);
     } else {
       const t4 = Date.now();
       response = await proxyToOrigin(request, env.ORIGIN_URL, env.WORKER_ORIGIN_SECRET, visitorIp);
