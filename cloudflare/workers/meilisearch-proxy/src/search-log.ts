@@ -41,6 +41,12 @@ export interface SearchLogInput {
 	 * provider searches into the demand log.
 	 */
 	statusBypassRequested: boolean;
+	/**
+	 * Whether the caller marked the search as machine-sent, such as the
+	 * related-listings sidebar querying a listing's own tags. Those are not
+	 * terms a family typed.
+	 */
+	searchSourceMarked: boolean;
 	responseOk: boolean;
 	searchParams: SearchParams | null;
 	responseText: string;
@@ -78,6 +84,7 @@ export function recordSearch(dataset: AnalyticsEngineDataset | undefined, input:
 export function buildSearchEvent(input: SearchLogInput): SearchEvent | null {
 	if (input.indexName !== LOGGED_INDEX) return null;
 	if (input.statusBypassRequested) return null;
+	if (input.searchSourceMarked) return null;
 	if (!input.responseOk) return null;
 	if (!input.searchParams) return null;
 

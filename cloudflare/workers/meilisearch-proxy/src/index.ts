@@ -151,6 +151,7 @@ export default {
 			ctx.waitUntil(Promise.resolve().then(() => recordSearch(env.SEARCH_ANALYTICS, {
 				indexName,
 				statusBypassRequested: request.headers.has('X-Status-Bypass'),
+				searchSourceMarked: request.headers.has('X-Search-Source'),
 				responseOk: response.ok,
 				searchParams,
 				// A multi-search answer nests one result per query; the log reads the caller's own.

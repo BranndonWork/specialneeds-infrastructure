@@ -5,6 +5,7 @@ function input(overrides: Partial<SearchLogInput> = {}): SearchLogInput {
 	return {
 		indexName: 'listings',
 		statusBypassRequested: false,
+		searchSourceMarked: false,
 		responseOk: true,
 		searchParams: { q: 'autism' },
 		responseText: JSON.stringify({ hits: [], estimatedTotalHits: 7 }),
@@ -40,6 +41,10 @@ describe('buildSearchEvent', () => {
 
 		it('skips provider and staff searches that carry the status bypass', () => {
 			expect(buildSearchEvent(input({ statusBypassRequested: true }))).toBeNull();
+		});
+
+		it('skips a search the caller marked with a search source', () => {
+			expect(buildSearchEvent(input({ searchSourceMarked: true }))).toBeNull();
 		});
 
 		it('skips a failed search', () => {

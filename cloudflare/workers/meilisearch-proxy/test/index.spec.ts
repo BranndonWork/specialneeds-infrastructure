@@ -319,6 +319,31 @@ describe('meilisearch-proxy', () => {
 			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
 		});
 
+		it('does not log a related-listings sidebar search', async () => {
+			replyWithHits();
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			const response = await dispatch(
+				makeSearchRequest({ q: 'speech therapy' }, { 'X-Search-Source': 'related-listings' }),
+				{ SEARCH_ANALYTICS },
+			);
+
+			expect(response.status).toBe(200);
+			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
+		});
+
+		it('does not forward X-Search-Source to Meilisearch', async () => {
+			fetchMock
+				.get(env.MEILI_HOST)
+				.intercept({ method: 'POST', path: '/indexes/listings/search' })
+				.reply(200, (req) => {
+					expect(req.headers['x-search-source']).toBeUndefined();
+					return JSON.stringify({ hits: [], estimatedTotalHits: 1 });
+				});
+
+			await dispatch(makeSearchRequest({ q: 'camps' }, { 'X-Search-Source': 'related-listings' }), { SEARCH_ANALYTICS: fakeDataset() });
+		});
+
 		// Keyed on the header being present, not on the secret matching, so a
 		// rotated secret cannot spill provider searches into the demand log.
 		it('does not log a provider search whose bypass secret is stale', async () => {
