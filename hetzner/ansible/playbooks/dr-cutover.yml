@@ -3,28 +3,42 @@
 # Promotes Box B to live production.
 #
 # Steps:
-#   1. Flip Cloudflare DNS: api.specialneeds.com → Box B IP
-#   2. Update Cloudflare Worker secrets: MEILI_HOST + MEILI_SEARCH_KEY for Box B's Meilisearch
-#   3. Trigger Meilisearch reindex on Box B
-#   4. Verify API health on Box B via new DNS
+#   1. Point the API gateway Worker's origin at Box B. The API hostname is a route on that
+#      Worker, so this, not the DNS record, is what moves API traffic.
+#   2. Point the search proxy Worker's Meilisearch host and key at Box B
+#   3. Point each cutover hostname's DNS record at Box B's IP
+#   4. Verify API health through the public hostname
+#
+# Do a dry run first: it reads the DNS records and prints every change without making one.
 #
 # Prerequisites (confirm before running):
 #   - Box B is provisioned, all services running (site.yml complete)
-#   - secrets synced to Coolify on Box B (sync-secrets-to-coolify.yml complete)
-#   - Meilisearch on Box B is seeded (run runbook-rebuild-meilisearch.md manually first)
-#   - DNS TTL is low (Cloudflare proxied records use Cloudflare's TTL; still plan for 5 min propagation)
+#   - secrets synced to Coolify on Box B (sync-secrets-to-coolify.yml complete). The gateway's
+#     origin secret stays as it is, because Box B's Django reads the same bws value.
+#   - Meilisearch on Box B is seeded ("Rebuild Meilisearch" runbook)
 #
-# See: docs/specialneeds-api/planned-work/disaster-recovery/runbook-cutover.md
+# Runbooks: special-needs repo, workbook/projects/specialneeds-api/disaster-recovery/runbooks.md
 
 - name: DR Cutover — Promote Box B to production
   hosts: localhost
   gather_facts: false
 
   vars:
+    account_id: "fe1f2e378f772da0306f703d362b97f9"
     zone_id: "3df33cbd8f514275c7074407989b5b12"
     cloudflare_api_base: "https://api.cloudflare.com/client/v4"
-    # Worker IDs — verify via: wrangler whoami / Cloudflare dashboard
+    gateway_worker_script_name: "api-gateway"
     meili_worker_script_name: "meilisearch-proxy"
+    cutover_hostnames:
+      - api.specialneeds.com
+      - claude.specialneeds.com
+    health_url: "https://api.specialneeds.com/health/?simple=true"
+    dns_propagation_seconds: 30
+    dry_run: false
+    worker_secret_changes:
+      - { script: "{{ gateway_worker_script_name }}", name: ORIGIN_URL, value: "{{ box_b_origin_url }}", shown: true }
+      - { script: "{{ meili_worker_script_name }}", name: MEILI_HOST, value: "{{ box_b_meili_host }}", shown: true }
+      - { script: "{{ meili_worker_script_name }}", name: MEILI_SEARCH_KEY, value: "{{ box_b_meili_search_key }}", shown: false }
 
   tasks:
     - name: Require cutover variables
@@ -32,88 +46,111 @@
         that:
           - cloudflare_api_token is defined
           - box_b_ipv4 is defined
+          - box_b_origin_url is defined and box_b_origin_url is match("http://")
+          - box_b_meili_host is defined and box_b_meili_host is match("http://")
           - box_b_meili_search_key is defined
         fail_msg: |
-          Required variables missing. Pass:
+          Required variables missing or invalid. Pass:
             -e cloudflare_api_token=<token>
             -e box_b_ipv4=<Box B public IP>
+            -e box_b_origin_url=<Box B Django sslip.io URL, http:// (the Worker's fetch rejects the sslip.io certificate)>
+            -e box_b_meili_host=<Box B Meilisearch sslip.io URL, http://, from the Coolify UI or docker inspect>
             -e box_b_meili_search_key=<key from Box B Meilisearch: GET /keys with master key>
 
-    - name: Get current api.specialneeds.com DNS record ID
+    - name: Look up the DNS record of each cutover host
       uri:
-        url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records?name=api.specialneeds.com&type=A"
+        url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records?name={{ item }}"
         headers:
           Authorization: "Bearer {{ cloudflare_api_token }}"
         status_code: 200
-      register: dns_records
+      loop: "{{ cutover_hostnames }}"
+      register: dns_lookups
 
-    - name: Flip api.specialneeds.com A record to Box B
+    # The zone has carried these hosts as proxied CNAMEs to Box A's sslip.io names as well as
+    # A records, so either type is rewritten as an A record to Box B's IP.
+    - name: Require exactly one A or CNAME record per cutover host
+      assert:
+        that:
+          - item.json.result | length == 1
+          - item.json.result[0].type in ['A', 'CNAME']
+        fail_msg: "{{ item.item }} has {{ item.json.result | map(attribute='type') | list }}; expected one A or CNAME record"
+        quiet: true
+      loop: "{{ dns_lookups.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Dry run — Worker secrets a real run would set
+      debug:
+        msg: "{{ item.script }}: secret {{ item.name }} -> {{ item.value if item.shown else '(hidden)' }}"
+      loop: "{{ worker_secret_changes }}"
+      loop_control:
+        label: "{{ item.script }} {{ item.name }}"
+      when: dry_run | bool
+
+    - name: Dry run — DNS records a real run would rewrite
+      debug:
+        msg: "{{ item.item }}: {{ item.json.result[0].type }} {{ item.json.result[0].content }} -> A {{ box_b_ipv4 }}"
+      loop: "{{ dns_lookups.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: dry_run | bool
+
+    - name: Update Worker secrets
       uri:
-        url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records/{{ dns_records.json.result[0].id }}"
+        url: "{{ cloudflare_api_base }}/accounts/{{ account_id }}/workers/scripts/{{ item.script }}/secrets"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ cloudflare_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          text: "{{ item.value }}"
+          type: "secret_text"
+        status_code: [200, 201]
+      loop: "{{ worker_secret_changes }}"
+      no_log: true
+      when: not dry_run | bool
+
+    - name: Point DNS records at Box B
+      uri:
+        url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records/{{ item.json.result[0].id }}"
         method: PATCH
         headers:
           Authorization: "Bearer {{ cloudflare_api_token }}"
           Content-Type: "application/json"
         body_format: json
         body:
+          type: A
           content: "{{ box_b_ipv4 }}"
         status_code: 200
-      register: dns_flip
+      loop: "{{ dns_lookups.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not dry_run | bool
 
-    - name: Confirm DNS flip
-      debug:
-        msg: "api.specialneeds.com now points to {{ box_b_ipv4 }}"
-
-    - name: Update MEILI_SEARCH_KEY in Cloudflare Worker (meilisearch-proxy)
-      uri:
-        url: "{{ cloudflare_api_base }}/accounts/fe1f2e378f772da0306f703d362b97f9/workers/scripts/{{ meili_worker_script_name }}/secrets"
-        method: PUT
-        headers:
-          Authorization: "Bearer {{ cloudflare_api_token }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          name: "MEILI_SEARCH_KEY"
-          text: "{{ box_b_meili_search_key }}"
-          type: "secret_text"
-        status_code: [200, 201]
-      no_log: true
-
-    - name: Update MEILI_HOST in Cloudflare Worker (meilisearch-proxy)
-      uri:
-        url: "{{ cloudflare_api_base }}/accounts/fe1f2e378f772da0306f703d362b97f9/workers/scripts/{{ meili_worker_script_name }}/secrets"
-        method: PUT
-        headers:
-          Authorization: "Bearer {{ cloudflare_api_token }}"
-          Content-Type: "application/json"
-        body_format: json
-        body:
-          name: "MEILI_HOST"
-          # Box B Meilisearch sslip.io URL — assigned by Coolify at deploy time
-          # Find via Coolify UI or: docker inspect on Box B's meilisearch container
-          text: "{{ box_b_meili_host }}"
-          type: "secret_text"
-        status_code: [200, 201]
-      when: box_b_meili_host is defined
-      no_log: true
-
-    - name: Wait for DNS propagation (30 seconds)
+    - name: Wait for DNS propagation
       pause:
-        seconds: 30
+        seconds: "{{ dns_propagation_seconds }}"
+      when: not dry_run | bool
 
-    - name: Verify API health at new IP
+    - name: Verify API health through the public hostname
       uri:
-        url: "https://api.specialneeds.com/health/?simple=true"
+        url: "{{ health_url }}"
         status_code: 200
         timeout: 15
       register: health_check
       retries: 10
       delay: 10
       until: health_check.status == 200
+      when: not dry_run | bool
 
     - name: Cutover complete
       debug:
         msg: |
-          Cutover complete. api.specialneeds.com is now served by Box B ({{ box_b_ipv4 }}).
-          Next: Update dns.tf box_a_ipv4/box_b_ipv4 and api_active_box vars in shared/cloudflare-dns.tf
-          and run `terraform apply` to bring state in sync.
+          Cutover complete. {{ cutover_hostnames | join(', ') }} now point to Box B ({{ box_b_ipv4 }}),
+          and the api-gateway and meilisearch-proxy Workers send traffic to Box B.
+          Two Terraform sources still describe Box A, and an apply from either undoes this cutover:
+          hetzner/terraform/shared/cloudflare-dns.tf (api only; set api_active_box=box-b) and the
+          local Cloudflare export terraform/dns.tf (api and claude). Update both before any apply.
+      when: not dry_run | bool

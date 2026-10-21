@@ -7,6 +7,7 @@ export default defineWorkersConfig({
 				wrangler: { configPath: './wrangler.jsonc' },
 				miniflare: {
 					bindings: {
+						MEILI_HOST: 'http://meilisearch.test',
 						MEILI_SEARCH_KEY: 'test-search-key',
 						MEILISEARCH_STATUS_BYPASS_KEY: 'test-bypass-secret',
 					},
