@@ -69,7 +69,7 @@ describe('KV entries honour the max-age Django sent', () => {
 		expect(await read(url)).toBeNull();
 	});
 
-	it('keeps the expired body in KV so the origin-down fallback can still use it', async () => {
+	it('keeps the expired body in KV so the stale-if-error fallback can still use it', async () => {
 		const url = uniqueUrl('retained');
 		await seedKv(url, '{"v":"stale"}', {
 			contentType: 'application/json',
@@ -369,6 +369,16 @@ describe('origin failures', () => {
 		expect(res.status).toBe(200);
 		expect(res.headers.get('X-Cache')).toBe('STALE-ERROR');
 		expect(await res.text()).toBe('{"v":"stale"}');
+	});
+
+	it('answers 503 when the origin is unreachable and the stored copy carries no storedAt', async () => {
+		const url = uniqueUrl('unstamped');
+		await seedKv(url, '{"v":"unstamped"}', { contentType: 'application/json', cacheControl: 'public, max-age=300' });
+		fetchMock.get(env.ORIGIN_URL).intercept({ path: new URL(url).pathname }).replyWithError(new Error('connection refused'));
+
+		const res = await readThroughCache(url);
+
+		expect(res.status).toBe(503);
 	});
 
 	it('answers 503 when the origin is unreachable and nothing is stored', async () => {

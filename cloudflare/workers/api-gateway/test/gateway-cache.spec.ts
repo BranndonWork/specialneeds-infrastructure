@@ -80,7 +80,7 @@ describe('an origin 5xx through the worker', () => {
 		expect(await res.text()).toBe('{"v":"stale"}');
 	});
 
-	it('passes the error through when no copy is stored', async () => {
+	it("answers with the origin's 5xx status when no copy is stored", async () => {
 		const path = uniquePath('5xx-no-stale');
 		expectOrigin(path, '{"error":"boom"}', 502);
 
@@ -91,7 +91,29 @@ describe('an origin 5xx through the worker', () => {
 		expect(await res.json()).toEqual({ error: 'Service unavailable' });
 	});
 
-	it('passes a 501 through even when an expired copy is stored', async () => {
+	it('answers with the 5xx when the stored copy is past its stale-if-error window', async () => {
+		const path = uniquePath('5xx-past-window');
+		await seedKv(path, '{"v":"too-old"}', 300 + 86400 + 60);
+		expectOrigin(path, '{"error":"boom"}', 503);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.44' } });
+
+		expect(res.status).toBe(503);
+		expect(res.headers.get('X-Cache')).toBeNull();
+	});
+
+	it('answers with the 5xx when the stored copy carries no storedAt', async () => {
+		const path = uniquePath('5xx-unstamped');
+		await env.CACHE_KV.put(await cacheKey(apiUrl(path)), '{"v":"unstamped"}', { metadata: { contentType: 'application/json' } });
+		expectOrigin(path, '{"error":"boom"}', 503);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.45' } });
+
+		expect(res.status).toBe(503);
+		expect(res.headers.get('X-Cache')).toBeNull();
+	});
+
+	it('answers with a 501 even when an expired copy is stored', async () => {
 		const path = uniquePath('501-with-stale');
 		await seedKv(path, '{"v":"stale"}', 600);
 		expectOrigin(path, '{"error":"not implemented"}', 501);

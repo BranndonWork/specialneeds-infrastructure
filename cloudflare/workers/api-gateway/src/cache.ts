@@ -17,8 +17,8 @@ interface CacheMeta {
   maxAge?: number;
 }
 
-// An entry past its max-age is not served, but is kept in KV so fetchAndCache can fall back to it
-// if the origin is unreachable or answers a 5xx. Entries written before storedAt existed are treated as expired so
+// An entry past its max-age is not served, but is kept in KV so fetchAndCache can serve it as the
+// stale-if-error fallback. Entries written before storedAt existed are treated as expired so
 // they refresh once on next request.
 function isFresh(meta: CacheMeta | null | undefined): boolean {
   if (!meta?.storedAt || meta.maxAge === undefined) return false;
@@ -145,11 +145,18 @@ export async function checkCache(
 // so the origin's answer stands.
 const STALE_IF_ERROR_STATUSES = new Set([500, 502, 503, 504]);
 
-// KV keeps an entry for max-age plus stale-if-error, so any body still stored is inside its
-// stale-if-error window.
+// KV's own expiry can outlast the window (the KV_MIN_TTL floor, and entries written before
+// storedAt existed never expire), so the window is checked here. An entry with no storedAt has
+// no window and is never served stale.
+function isWithinStaleIfError(meta: CacheMeta | null | undefined): boolean {
+  if (!meta?.storedAt || meta.maxAge === undefined) return false;
+  const { staleIfError } = parseCacheControl(meta.cacheControl ?? null);
+  return (Date.now() - meta.storedAt) / 1000 < meta.maxAge + staleIfError;
+}
+
 async function readStale(cacheKv: KVNamespace, key: string): Promise<Response | null> {
   const stale = await cacheKv.getWithMetadata<CacheMeta>(key, 'text');
-  if (!stale.value) return null;
+  if (!stale.value || !isWithinStaleIfError(stale.metadata)) return null;
   console.log(`[origin:stale-fallback] serving stale from KV`);
   return new Response(stale.value, {
     status: 200,
