@@ -2,7 +2,7 @@ import { stripIdentityHeaders } from './identity';
 import { toOriginUrl } from './origin';
 
 const DEFAULT_MAX_AGE = 300;  // fallback if Django sends no Cache-Control
-const DEFAULT_STALE_IF_ERROR = 86400;  // how long an expired entry is kept purely as an origin-down fallback
+const DEFAULT_STALE_IF_ERROR = 86400;  // how long an expired entry is kept purely as the origin-error fallback
 const KV_MIN_TTL = 60;  // Cloudflare KV rejects expirationTtl below 60s
 // L1 is per PoP and a DELETE evicts it only at the PoP that handles the DELETE, so every other
 // PoP ages an entry out on its own. The cap bounds that staleness to a minute after an edit while
@@ -17,8 +17,8 @@ interface CacheMeta {
   maxAge?: number;
 }
 
-// An entry past its max-age is not served, but is kept in KV so fetchAndCache can fall back to it
-// if the origin is unreachable. Entries written before storedAt existed are treated as expired so
+// An entry past its max-age is not served, but is kept in KV so fetchAndCache can serve it as the
+// stale-if-error fallback. Entries written before storedAt existed are treated as expired so
 // they refresh once on next request.
 function isFresh(meta: CacheMeta | null | undefined): boolean {
   if (!meta?.storedAt || meta.maxAge === undefined) return false;
@@ -123,7 +123,7 @@ export async function checkCache(
   console.log(`[cache:l2-kv] ${stored.value ? 'HIT' : 'MISS'} ${Date.now() - t2}ms`);
   if (stored.value && !isFresh(stored.metadata)) {
     // Past Django's max-age. Fall through to the origin. The entry stays in KV for the
-    // origin-down fallback in fetchAndCache.
+    // origin-error fallback in fetchAndCache.
     console.log(`[cache:l2-expired] age exceeded max-age=${stored.metadata?.maxAge ?? 'unset'}`);
     return null;
   }
@@ -139,6 +139,32 @@ export async function checkCache(
 
   console.log(`[cache] MISS ${Date.now() - t0}ms`);
   return null;
+}
+
+// The origin answers that stale-if-error covers (RFC 5861). A 501 or 505 is not a passing fault,
+// so the origin's answer stands.
+const STALE_IF_ERROR_STATUSES = new Set([500, 502, 503, 504]);
+
+// KV's own expiry can outlast the window (the KV_MIN_TTL floor, and entries written before
+// storedAt existed never expire), so the window is checked here. An entry with no storedAt has
+// no window and is never served stale.
+function isWithinStaleIfError(meta: CacheMeta | null | undefined): boolean {
+  if (!meta?.storedAt || meta.maxAge === undefined) return false;
+  const { staleIfError } = parseCacheControl(meta.cacheControl ?? null);
+  return (Date.now() - meta.storedAt) / 1000 < meta.maxAge + staleIfError;
+}
+
+async function readStale(cacheKv: KVNamespace, key: string): Promise<Response | null> {
+  const stale = await cacheKv.getWithMetadata<CacheMeta>(key, 'text');
+  if (!stale.value || !isWithinStaleIfError(stale.metadata)) return null;
+  console.log(`[origin:stale-fallback] serving stale from KV`);
+  return new Response(stale.value, {
+    status: 200,
+    headers: {
+      'Content-Type': stale.metadata?.contentType ?? 'application/json',
+      'X-Cache': 'STALE-ERROR',
+    },
+  });
 }
 
 export async function fetchAndCache(
@@ -177,24 +203,17 @@ export async function fetchAndCache(
     console.log(`[origin:fetch] status=${res.status} ${Date.now() - t0}ms ${target.pathname}`);
   } catch (err) {
     console.log(`[origin:fetch] error: ${err}`);
-    // Origin unreachable — serve stale if available
-    if (cacheable) {
-      const stale = await cacheKv.getWithMetadata<CacheMeta>(key, 'text');
-      if (stale.value) {
-        console.log(`[origin:stale-fallback] serving stale from KV`);
-        return new Response(stale.value, {
-          status: 200,
-          headers: {
-            'Content-Type': stale.metadata?.contentType ?? 'application/json',
-            'X-Cache': 'STALE-ERROR',
-          },
-        });
-      }
-    }
+    const stale = cacheable ? await readStale(cacheKv, key) : null;
+    if (stale) return stale;
     return new Response(JSON.stringify({ error: 'Service unavailable' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  if (cacheable && STALE_IF_ERROR_STATUSES.has(res.status)) {
+    const stale = await readStale(cacheKv, key);
+    if (stale) return stale;
   }
 
   if (cacheable && res.ok) {

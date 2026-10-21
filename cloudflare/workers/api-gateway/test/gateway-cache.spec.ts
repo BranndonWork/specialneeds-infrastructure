@@ -68,11 +68,20 @@ describe('an origin 5xx through the worker', () => {
 	});
 	afterEach(() => fetchMock.assertNoPendingInterceptors());
 
-	// Pins current behavior: the stale fallback covers an unreachable origin only, so a 5xx answer
-	// wins over a stored copy. #969 extends the fallback to 5xx and flips this case.
-	it('answers with the error even when an expired copy is stored', async () => {
-		const path = uniquePath('5xx-with-stale');
+	it.each([500, 502, 503, 504])('serves the expired copy when the origin answers %i', async (status) => {
+		const path = uniquePath(`${status}-with-stale`);
 		await seedKv(path, '{"v":"stale"}', 600);
+		expectOrigin(path, '{"error":"boom"}', status);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': `198.51.100.${status - 450}` } });
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('X-Cache')).toBe('STALE-ERROR');
+		expect(await res.text()).toBe('{"v":"stale"}');
+	});
+
+	it("answers with the origin's 5xx status when no copy is stored", async () => {
+		const path = uniquePath('5xx-no-stale');
 		expectOrigin(path, '{"error":"boom"}', 502);
 
 		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.42' } });
@@ -80,5 +89,38 @@ describe('an origin 5xx through the worker', () => {
 		expect(res.status).toBe(502);
 		expect(res.headers.get('X-Cache')).toBeNull();
 		expect(await res.json()).toEqual({ error: 'Service unavailable' });
+	});
+
+	it('answers with the 5xx when the stored copy is past its stale-if-error window', async () => {
+		const path = uniquePath('5xx-past-window');
+		await seedKv(path, '{"v":"too-old"}', 300 + 86400 + 60);
+		expectOrigin(path, '{"error":"boom"}', 503);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.44' } });
+
+		expect(res.status).toBe(503);
+		expect(res.headers.get('X-Cache')).toBeNull();
+	});
+
+	it('answers with the 5xx when the stored copy carries no storedAt', async () => {
+		const path = uniquePath('5xx-unstamped');
+		await env.CACHE_KV.put(await cacheKey(apiUrl(path)), '{"v":"unstamped"}', { metadata: { contentType: 'application/json' } });
+		expectOrigin(path, '{"error":"boom"}', 503);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.45' } });
+
+		expect(res.status).toBe(503);
+		expect(res.headers.get('X-Cache')).toBeNull();
+	});
+
+	it('answers with a 501 even when an expired copy is stored', async () => {
+		const path = uniquePath('501-with-stale');
+		await seedKv(path, '{"v":"stale"}', 600);
+		expectOrigin(path, '{"error":"not implemented"}', 501);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.43' } });
+
+		expect(res.status).toBe(501);
+		expect(res.headers.get('X-Cache')).toBeNull();
 	});
 });
