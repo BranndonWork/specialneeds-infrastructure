@@ -6,6 +6,9 @@
 
 - name: Run Coolify installer
   shell: curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash -s {{ coolify_version | quote }}
+  # Auto-update would move the box off the pinned version before a coolify-db restore lands.
+  environment:
+    AUTOUPDATE: "false"
   args:
     creates: /data/coolify
   when: not coolify_data_dir.stat.exists
