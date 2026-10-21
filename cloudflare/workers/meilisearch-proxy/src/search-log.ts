@@ -42,9 +42,9 @@ export interface SearchLogInput {
 	 */
 	statusBypassRequested: boolean;
 	/**
-	 * Whether the caller marked the search as machine-sent, such as the
-	 * related-listings sidebar querying a listing's own tags. Those are not
-	 * terms a family typed.
+	 * Whether the caller marked the search as one it sent itself rather than
+	 * one a family typed. Set from the presence of the header; its value is
+	 * only a label and is never read.
 	 */
 	searchSourceMarked: boolean;
 	responseOk: boolean;

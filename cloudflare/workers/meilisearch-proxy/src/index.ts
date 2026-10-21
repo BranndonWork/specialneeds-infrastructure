@@ -132,7 +132,7 @@ export default {
 				body = JSON.stringify(parsed);
 			}
 
-			// Forward request to Meilisearch (strip X-Status-Bypass — never forward to origin)
+			// Forward with only the auth and content-type headers; no caller header reaches the origin.
 			const meiliRequest = new Request(meiliUrl, {
 				method: 'POST',
 				headers: {
