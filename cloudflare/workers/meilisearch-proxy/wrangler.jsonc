@@ -25,5 +25,5 @@
 			"custom_domain": true
 		}
 	]
-	// Secrets, set with wrangler secret put: MEILI_HOST, MEILI_SEARCH_KEY
+	// Secrets are set with wrangler secret put; see docs/workers.md
 }

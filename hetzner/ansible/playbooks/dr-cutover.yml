@@ -3,18 +3,18 @@
 # Promotes Box B to live production.
 #
 # Steps:
-#   1. Point the api-gateway Worker's ORIGIN_URL at Box B. api.specialneeds.com/* is a route on
-#      that Worker, so this, not the DNS record, is what moves API traffic.
-#   2. Point the meilisearch-proxy Worker's MEILI_HOST and MEILI_SEARCH_KEY at Box B's Meilisearch
-#   3. Flip the A record of every host in cutover_hostnames to Box B
+#   1. Point the API gateway Worker's origin at Box B. The API hostname is a route on that
+#      Worker, so this, not the DNS record, is what moves API traffic.
+#   2. Point the search proxy Worker's Meilisearch host and key at Box B
+#   3. Point each cutover hostname's DNS record at Box B's IP
 #   4. Verify API health through the public hostname
 #
-# Run with -e dry_run=true first: it reads the DNS records and prints every change without making one.
+# Do a dry run first: it reads the DNS records and prints every change without making one.
 #
 # Prerequisites (confirm before running):
 #   - Box B is provisioned, all services running (site.yml complete)
 #   - secrets synced to Coolify on Box B (sync-secrets-to-coolify.yml complete). The gateway's
-#     WORKER_ORIGIN_SECRET stays as it is, because Box B's Django reads the same bws value.
+#     origin secret stays as it is, because Box B's Django reads the same bws value.
 #   - Meilisearch on Box B is seeded ("Rebuild Meilisearch" runbook)
 #
 # Runbooks: special-needs repo, workbook/projects/specialneeds-api/disaster-recovery/runbooks.md
@@ -57,19 +57,23 @@
             -e box_b_meili_host=<Box B Meilisearch sslip.io URL, http://, from the Coolify UI or docker inspect>
             -e box_b_meili_search_key=<key from Box B Meilisearch: GET /keys with master key>
 
-    - name: Look up the A record of each cutover host
+    - name: Look up the DNS record of each cutover host
       uri:
-        url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records?name={{ item }}&type=A"
+        url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records?name={{ item }}"
         headers:
           Authorization: "Bearer {{ cloudflare_api_token }}"
         status_code: 200
       loop: "{{ cutover_hostnames }}"
       register: dns_lookups
 
-    - name: Require exactly one A record per cutover host
+    # The zone has carried these hosts as proxied CNAMEs to Box A's sslip.io names as well as
+    # A records, so either type is rewritten as an A record to Box B's IP.
+    - name: Require exactly one A or CNAME record per cutover host
       assert:
-        that: item.json.result | length == 1
-        fail_msg: "{{ item.item }} has {{ item.json.result | length }} A records; expected 1"
+        that:
+          - item.json.result | length == 1
+          - item.json.result[0].type in ['A', 'CNAME']
+        fail_msg: "{{ item.item }} has {{ item.json.result | map(attribute='type') | list }}; expected one A or CNAME record"
         quiet: true
       loop: "{{ dns_lookups.results }}"
       loop_control:
@@ -83,9 +87,9 @@
         label: "{{ item.script }} {{ item.name }}"
       when: dry_run | bool
 
-    - name: Dry run — A records a real run would flip
+    - name: Dry run — DNS records a real run would rewrite
       debug:
-        msg: "{{ item.item }}: A {{ item.json.result[0].content }} -> {{ box_b_ipv4 }}"
+        msg: "{{ item.item }}: {{ item.json.result[0].type }} {{ item.json.result[0].content }} -> A {{ box_b_ipv4 }}"
       loop: "{{ dns_lookups.results }}"
       loop_control:
         label: "{{ item.item }}"
@@ -108,7 +112,7 @@
       no_log: true
       when: not dry_run | bool
 
-    - name: Flip A records to Box B
+    - name: Point DNS records at Box B
       uri:
         url: "{{ cloudflare_api_base }}/zones/{{ zone_id }}/dns_records/{{ item.json.result[0].id }}"
         method: PATCH
@@ -117,6 +121,7 @@
           Content-Type: "application/json"
         body_format: json
         body:
+          type: A
           content: "{{ box_b_ipv4 }}"
         status_code: 200
       loop: "{{ dns_lookups.results }}"
@@ -145,6 +150,7 @@
         msg: |
           Cutover complete. {{ cutover_hostnames | join(', ') }} now point to Box B ({{ box_b_ipv4 }}),
           and the api-gateway and meilisearch-proxy Workers send traffic to Box B.
-          Next: update box_a_ipv4/box_b_ipv4 and api_active_box in shared/cloudflare-dns.tf and run
-          `terraform apply` to bring state in sync. Terraform does not manage claude.specialneeds.com.
+          Two Terraform sources still describe Box A, and an apply from either undoes this cutover:
+          hetzner/terraform/shared/cloudflare-dns.tf (api only; set api_active_box=box-b) and the
+          local Cloudflare export terraform/dns.tf (api and claude). Update both before any apply.
       when: not dry_run | bool
