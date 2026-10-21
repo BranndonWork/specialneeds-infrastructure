@@ -1,8 +1,12 @@
 ---
-# Monitor Django containers (both staging and production)
+# Monitor Django containers: the compose app names them django-<app>-<ts>, and the
+# django app names them <app-uuid>-<ts>
 source: docker
 container_name_regexp:
     - "^django-.*"
+{% if coolify_django_app_uuid %}
+    - "^{{ coolify_django_app_uuid }}-.*"
+{% endif %}
 labels:
     type: django
 ---

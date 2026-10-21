@@ -3,5 +3,11 @@
 coolify_db_backup_bucket: specialneeds-coolify-backups
 coolify_api_base: "http://localhost:{{ coolify_port }}/api/v1"
 
+# Coolify app uuids, from each app's Coolify URL. The compose app runs the celery
+# services. Django runs in its own app once the rolling-deploy cutover creates it
+# (docs/specialneeds-api/django-rolling-deploy-runbook.md); empty until then.
+coolify_compose_app_uuid: y4gcswkooskoc44ggwokcgsw
+coolify_django_app_uuid: ""
+
 # Ansible health probe URL — used by monitor_api_health.sh
 api_health_url: "https://api.specialneeds.com/health/?simple=true"

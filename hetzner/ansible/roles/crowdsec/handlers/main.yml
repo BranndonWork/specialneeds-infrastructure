@@ -1,4 +1,11 @@
 ---
+# CrowdSec reads acquis.yaml only at startup.
+- name: restart crowdsec
+  community.docker.docker_compose_v2:
+    project_src: /data/crowdsec
+    project_name: crowdsec
+    state: restarted
+
 - name: restart crowdsec bouncer
   service:
     name: crowdsec-cloudflare-worker-bouncer
