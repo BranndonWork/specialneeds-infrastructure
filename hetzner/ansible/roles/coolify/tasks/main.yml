@@ -5,7 +5,7 @@
   register: coolify_data_dir
 
 - name: Run Coolify installer
-  shell: curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+  shell: curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash -s {{ coolify_version | quote }}
   args:
     creates: /data/coolify
   when: not coolify_data_dir.stat.exists
