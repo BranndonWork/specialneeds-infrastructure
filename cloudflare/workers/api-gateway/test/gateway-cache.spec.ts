@@ -68,11 +68,20 @@ describe('an origin 5xx through the worker', () => {
 	});
 	afterEach(() => fetchMock.assertNoPendingInterceptors());
 
-	// Pins current behavior: the stale fallback covers an unreachable origin only, so a 5xx answer
-	// wins over a stored copy. #969 extends the fallback to 5xx and flips this case.
-	it('answers with the error even when an expired copy is stored', async () => {
-		const path = uniquePath('5xx-with-stale');
+	it.each([500, 502, 503, 504])('serves the expired copy when the origin answers %i', async (status) => {
+		const path = uniquePath(`${status}-with-stale`);
 		await seedKv(path, '{"v":"stale"}', 600);
+		expectOrigin(path, '{"error":"boom"}', status);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': `198.51.100.${status - 450}` } });
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('X-Cache')).toBe('STALE-ERROR');
+		expect(await res.text()).toBe('{"v":"stale"}');
+	});
+
+	it('passes the error through when no copy is stored', async () => {
+		const path = uniquePath('5xx-no-stale');
 		expectOrigin(path, '{"error":"boom"}', 502);
 
 		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.42' } });
@@ -80,5 +89,16 @@ describe('an origin 5xx through the worker', () => {
 		expect(res.status).toBe(502);
 		expect(res.headers.get('X-Cache')).toBeNull();
 		expect(await res.json()).toEqual({ error: 'Service unavailable' });
+	});
+
+	it('passes a 501 through even when an expired copy is stored', async () => {
+		const path = uniquePath('501-with-stale');
+		await seedKv(path, '{"v":"stale"}', 600);
+		expectOrigin(path, '{"error":"not implemented"}', 501);
+
+		const res = await SELF.fetch(apiUrl(path), { headers: { 'cf-connecting-ip': '198.51.100.43' } });
+
+		expect(res.status).toBe(501);
+		expect(res.headers.get('X-Cache')).toBeNull();
 	});
 });
