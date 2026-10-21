@@ -13,8 +13,8 @@
 #   Dry run against Box A:
 #     ansible-playbook playbooks/site.yml --limit box-a --check
 #
-#   One role only, e.g. CrowdSec after an acquis.yaml change:
-#     ansible-playbook playbooks/site.yml --limit box-a --tags crowdsec
+#   CrowdSec's acquis.yaml alone, which restarts CrowdSec when the file changes:
+#     ansible-playbook playbooks/site.yml --limit box-a --tags crowdsec-acquis --check --diff
 #
 # bws_access_token must be passed via -e or set as an environment variable.
 # Never hardcode it. Retrieve from your personal Bitwarden vault before running.
@@ -35,7 +35,6 @@
     - bws-bootstrap
     - docker
     - coolify
-    - role: crowdsec
-      tags: crowdsec
+    - crowdsec
     - observability
     - monitor-scripts
