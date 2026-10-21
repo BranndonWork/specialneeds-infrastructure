@@ -13,6 +13,9 @@
 #   Dry run against Box A:
 #     ansible-playbook playbooks/site.yml --limit box-a --check
 #
+#   CrowdSec's acquis.yaml alone, which restarts CrowdSec when the file changes:
+#     ansible-playbook playbooks/site.yml --limit box-a --tags crowdsec-acquis --check --diff
+#
 # bws_access_token must be passed via -e or set as an environment variable.
 # Never hardcode it. Retrieve from your personal Bitwarden vault before running.
 

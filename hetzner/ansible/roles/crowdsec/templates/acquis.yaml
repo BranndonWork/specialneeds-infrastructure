@@ -1,0 +1,19 @@
+---
+# Monitor Django containers: the compose app names them django-<app>-<ts>, and the
+# django app names them <app-uuid>-<ts>, or sn-django-<ts> when its Container Name
+# Prefix is set
+source: docker
+container_name_regexp:
+    - "^django-.*"
+    - "^sn-django-.*"
+{% if coolify_django_app_uuid %}
+    - "^{{ coolify_django_app_uuid }}-.*"
+{% endif %}
+labels:
+    type: django
+---
+# Monitor Traefik/Coolify proxy logs
+source: file
+filename: /var/log/traefik/*.log
+labels:
+    type: traefik

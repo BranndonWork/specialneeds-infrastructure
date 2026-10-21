@@ -26,10 +26,12 @@
     mode: "0644"
 
 - name: Deploy acquis.yaml
-  copy:
+  template:
     src: acquis.yaml
     dest: /data/crowdsec/acquis.yaml
     mode: "0644"
+  notify: restart crowdsec
+  tags: crowdsec-acquis
 
 - name: Write crowdsec .env file
   copy:

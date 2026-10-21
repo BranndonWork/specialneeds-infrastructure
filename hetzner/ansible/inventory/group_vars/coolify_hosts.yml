@@ -3,5 +3,13 @@
 coolify_db_backup_bucket: specialneeds-coolify-backups
 coolify_api_base: "http://localhost:{{ coolify_port }}/api/v1"
 
+# Coolify app uuids, from each app's Coolify URL. The compose app runs the celery
+# services. An empty coolify_django_app_uuid means django runs inside the compose
+# app, so CrowdSec and the secret sync use the compose app only. Each box's Coolify
+# assigns its own uuids, so a box other than box-a sets both in
+# inventory/host_vars/<box>.yml.
+coolify_compose_app_uuid: y4gcswkooskoc44ggwokcgsw
+coolify_django_app_uuid: ""
+
 # Ansible health probe URL — used by monitor_api_health.sh
 api_health_url: "https://api.specialneeds.com/health/?simple=true"
