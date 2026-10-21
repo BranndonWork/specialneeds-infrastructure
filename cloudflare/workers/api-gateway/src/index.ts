@@ -3,6 +3,7 @@ import { checkCache, fetchAndCache } from './cache';
 import { handleKvEndpoint } from './kv-endpoint';
 import { handleRateLimitSlot } from './ratelimit-slot-endpoint';
 export { UpstreamSlot } from './upstream-slot';
+import type { UpstreamSlot } from './upstream-slot';
 import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identity';
 import { toOriginUrl } from './origin';
 import { requiresVerifiedIdentity } from './send-paths';
@@ -13,7 +14,7 @@ export interface Env {
   RATE_LIMIT_KV: KVNamespace;
   CACHE_KV: KVNamespace;
   CROWDSEC_KV: KVNamespace;
-  UPSTREAM_SLOT: DurableObjectNamespace;
+  UPSTREAM_SLOT: DurableObjectNamespace<UpstreamSlot>;
   CACHE_MGMT_TOKEN: string;
   WORKER_ORIGIN_SECRET: string;
   CF_API_TOKEN: string;
