@@ -1,8 +1,11 @@
 ---
 # cloudflared runs outside Coolify at /data/cloudflared/ on the `coolify` Docker network.
 # Every backend hostname reaches Traefik through this tunnel.
-# The tunnel token must be in bws as prod__api__CLOUDFLARE_TUNNEL_TOKEN. It can be
-# fetched again any time with terraform/scripts/cloudflare_tunnel.py.
+# The tunnel token arrives in the environment variable CLOUDFLARE_TUNNEL_TOKEN of the
+# ansible-playbook process. The laptop Keychain store holds it under the same name with a
+# prod__api__ prefix, so run the playbook through the secrets plugin:
+#   secrets reveal run "ansible-playbook ..." with global
+# A fresh token comes from terraform/scripts/cloudflare_tunnel.py or the Zero Trust dashboard.
 # See docs/specialneeds-infrastructure/cloudflare-tunnel-runbook.md.
 
 - name: Create /data/cloudflared directory
@@ -11,15 +14,15 @@
     state: directory
     mode: "0755"
 
-- name: Get tunnel token from bws
-  shell: >
-    bws secret list --output json |
-    python3 -c "import json,sys; s=json.load(sys.stdin); print(next(x['value'] for x in s if x['key']=='prod__api__CLOUDFLARE_TUNNEL_TOKEN'), end='')"
-  environment:
-    BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
-  register: cloudflare_tunnel_token_raw
-  changed_when: false
+- name: Read the tunnel token from the controller environment
+  set_fact:
+    cloudflare_tunnel_token: "{{ lookup('env', 'prod__api__CLOUDFLARE_TUNNEL_TOKEN') or lookup('env', 'CLOUDFLARE_TUNNEL_TOKEN') }}"
   no_log: true
+
+- name: Refuse to run without a tunnel token
+  assert:
+    that: cloudflare_tunnel_token | length > 0
+    fail_msg: "Set prod__api__CLOUDFLARE_TUNNEL_TOKEN (or CLOUDFLARE_TUNNEL_TOKEN) in the environment of ansible-playbook."
 
 - name: Deploy cloudflared compose file
   copy:
@@ -29,7 +32,7 @@
 
 - name: Write tunnel token file
   copy:
-    content: "TUNNEL_TOKEN={{ cloudflare_tunnel_token_raw.stdout }}"
+    content: "TUNNEL_TOKEN={{ cloudflare_tunnel_token }}"
     dest: /data/cloudflared/tunnel.token
     mode: "0600"
     owner: root
