@@ -1,5 +1,5 @@
 import { stripIdentityHeaders } from './identity';
-import { toOriginUrl } from './origin';
+import { forwardVisitorIp, toOriginUrl } from './origin';
 
 const DEFAULT_MAX_AGE = 300;  // fallback if Django sends no Cache-Control
 const DEFAULT_STALE_IF_ERROR = 86400;  // how long an expired entry is kept purely as an origin-down fallback
@@ -158,9 +158,7 @@ export async function fetchAndCache(
   const originHeaders = new Headers(request.headers);
   originHeaders.set('x-worker-origin-secret', originSecret);
   stripIdentityHeaders(originHeaders);
-  // Django's request_logger attributes and bans on CF-Connecting-IP. Behind the www proxy that
-  // header is our own egress, so a verified visitor IP replaces it.
-  if (visitorIp) originHeaders.set('CF-Connecting-IP', visitorIp);
+  forwardVisitorIp(originHeaders, request, visitorIp);
 
   let res: Response;
   try {

@@ -4,7 +4,7 @@ import { handleKvEndpoint } from './kv-endpoint';
 import { handleRateLimitSlot } from './ratelimit-slot-endpoint';
 export { UpstreamSlot } from './upstream-slot';
 import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identity';
-import { toOriginUrl } from './origin';
+import { forwardVisitorIp, toOriginUrl } from './origin';
 import { requiresVerifiedIdentity } from './send-paths';
 import { isScannerBlockCandidate, isScannerBlocked, recordNotFound } from './scanner-block';
 
@@ -28,9 +28,7 @@ async function proxyToOrigin(request: Request, originUrl: string, originSecret: 
   const headers = new Headers(request.headers);
   headers.set('x-worker-origin-secret', originSecret);
   stripIdentityHeaders(headers);
-  // Django's request_logger attributes and bans on CF-Connecting-IP. Behind the www proxy that
-  // header is our own egress, so a verified visitor IP replaces it.
-  if (visitorIp) headers.set('CF-Connecting-IP', visitorIp);
+  forwardVisitorIp(headers, request, visitorIp);
   try {
     return await fetch(new Request(url.toString(), {
       method: request.method,

@@ -31,6 +31,18 @@
     dest: /data/crowdsec/acquis.yaml
     mode: "0644"
 
+- name: Create /data/crowdsec/parsers directory
+  file:
+    path: /data/crowdsec/parsers
+    state: directory
+    mode: "0755"
+
+- name: Deploy the local Traefik parser (first X-Forwarded-For address behind the tunnel)
+  copy:
+    src: parsers/traefik-logs.yaml
+    dest: /data/crowdsec/parsers/traefik-logs.yaml
+    mode: "0644"
+
 - name: Write crowdsec .env file
   copy:
     content: "CROWDSEC_ENROLL_KEY={{ crowdsec_enroll_key_raw.stdout }}"
