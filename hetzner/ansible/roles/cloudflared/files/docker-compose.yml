@@ -1,0 +1,14 @@
+services:
+    cloudflared:
+        image: cloudflare/cloudflared:2026.10.3
+        container_name: cloudflare-tunnel
+        restart: unless-stopped
+        command: tunnel --no-autoupdate run
+        env_file:
+            - ./tunnel.token
+        networks:
+            - coolify
+
+networks:
+    coolify:
+        external: true

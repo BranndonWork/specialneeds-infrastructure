@@ -1,0 +1,43 @@
+---
+# cloudflared runs outside Coolify at /data/cloudflared/ on the `coolify` Docker network.
+# Every backend hostname reaches Traefik through this tunnel.
+# The tunnel token must be in bws as prod__api__CLOUDFLARE_TUNNEL_TOKEN. It can be
+# fetched again any time with terraform/scripts/cloudflare_tunnel.py.
+# See docs/specialneeds-infrastructure/cloudflare-tunnel-runbook.md.
+
+- name: Create /data/cloudflared directory
+  file:
+    path: /data/cloudflared
+    state: directory
+    mode: "0755"
+
+- name: Get tunnel token from bws
+  shell: >
+    bws secret list --output json |
+    python3 -c "import json,sys; s=json.load(sys.stdin); print(next(x['value'] for x in s if x['key']=='prod__api__CLOUDFLARE_TUNNEL_TOKEN'), end='')"
+  environment:
+    BWS_ACCESS_TOKEN: "{{ bws_access_token }}"
+  register: cloudflare_tunnel_token_raw
+  changed_when: false
+  no_log: true
+
+- name: Deploy cloudflared compose file
+  copy:
+    src: docker-compose.yml
+    dest: /data/cloudflared/docker-compose.yml
+    mode: "0644"
+
+- name: Write tunnel token file
+  copy:
+    content: "TUNNEL_TOKEN={{ cloudflare_tunnel_token_raw.stdout }}"
+    dest: /data/cloudflared/tunnel.token
+    mode: "0600"
+    owner: root
+    group: root
+  no_log: true
+
+- name: Start cloudflared
+  community.docker.docker_compose_v2:
+    project_src: /data/cloudflared
+    project_name: cloudflared
+    state: present

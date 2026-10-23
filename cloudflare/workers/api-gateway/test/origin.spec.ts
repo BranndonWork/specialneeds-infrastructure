@@ -1,9 +1,41 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { env, createExecutionContext, waitOnExecutionContext, fetchMock } from 'cloudflare:test';
-import { toOriginUrl } from '../src/origin';
+import { CLIENT_IP_HEADER, forwardVisitorIp, toOriginUrl } from '../src/origin';
 import { fetchAndCache } from '../src/cache';
 
 const ORIGIN = 'https://origin.test';
+
+describe('the visitor address survives the hop back through Cloudflare to the tunnel origin', () => {
+	function forwarded(verifiedIp: string | null, connectingIp?: string): Headers {
+		const incoming = new Headers();
+		if (connectingIp) incoming.set('cf-connecting-ip', connectingIp);
+		const headers = new Headers();
+		forwardVisitorIp(headers, new Request('https://api.test/api/v1/listings/', { headers: incoming }), verifiedIp);
+		return headers;
+	}
+
+	it('sends the connecting address in our header, X-Forwarded-For and CF-Connecting-IP', () => {
+		const headers = forwarded(null, '203.0.113.7');
+
+		expect(headers.get(CLIENT_IP_HEADER)).toBe('203.0.113.7');
+		expect(headers.get('X-Forwarded-For')).toBe('203.0.113.7');
+		expect(headers.get('CF-Connecting-IP')).toBe('203.0.113.7');
+	});
+
+	it('prefers a verified identity over the connecting address', () => {
+		const headers = forwarded('198.51.100.9', '203.0.113.7');
+
+		expect(headers.get(CLIENT_IP_HEADER)).toBe('198.51.100.9');
+		expect(headers.get('X-Forwarded-For')).toBe('198.51.100.9');
+	});
+
+	it('sets nothing when no address is known', () => {
+		const headers = forwarded(null);
+
+		expect(headers.has(CLIENT_IP_HEADER)).toBe(false);
+		expect(headers.has('X-Forwarded-For')).toBe(false);
+	});
+});
 
 function pathSentToOrigin(requestPath: string): string {
 	return toOriginUrl(`https://api.test${requestPath}`, ORIGIN).pathname;

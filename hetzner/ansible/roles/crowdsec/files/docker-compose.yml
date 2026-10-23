@@ -15,6 +15,7 @@ services:
             - "8095:8080"
         volumes:
             - ./acquis.yaml:/etc/crowdsec/acquis.yaml
+            - ./parsers/traefik-logs.yaml:/etc/crowdsec/parsers/s01-parse/traefik-logs.yaml:ro
             - crowdsec-config:/etc/crowdsec/
             - crowdsec-db:/var/lib/crowdsec/data/
             - /var/run/docker.sock:/var/run/docker.sock:ro
