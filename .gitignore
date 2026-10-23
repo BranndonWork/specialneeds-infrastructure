@@ -44,9 +44,16 @@ logs/
 dist/
 build/
 
-# Terraform (separate git repo)
-terraform/
+# Cloudflare Terraform (separate git repo at the root)
+/terraform/
 docs/
+
+# Hetzner Terraform under hetzner/terraform: code is tracked, state and secrets are not
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
 
 # Claude Code local settings
 .claude/settings.local.json

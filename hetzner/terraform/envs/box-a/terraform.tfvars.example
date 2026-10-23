@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (gitignored) before Phase 4b import.
+# WARNING: Do NOT run terraform apply for box-a without importing the existing server first.
+# Import sequence:
+#   terraform import module.box_a.hcloud_server.this <server_id>
+#   terraform import module.box_a.hcloud_ssh_key.deploy <ssh_key_id>
+#   terraform import module.box_a.hcloud_firewall.web <firewall_id>
+# Find IDs in Hetzner Cloud Console or via: curl -H "Authorization: Bearer $HETZNER_TOKEN" https://api.hetzner.cloud/v1/servers
+
+hetzner_api_token = "<from bws: prod__api__HETZNER_API_TOKEN>"
+
+# Confirmed via Hetzner API 2026-04-19 (server ID: 110907064)
+server_type = "cx33"
+location    = "fsn1"
+
+# The public key currently on Box A
+deploy_public_key = "<contents of ~/.ssh/id_ed25519.pub>"
+
+# SSH public key for the ansible user
+ansible_user_pubkey = "<contents of ~/.ssh/id_ed25519.pub>"

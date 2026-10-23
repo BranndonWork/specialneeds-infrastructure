@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values before running terraform apply.
+# Retrieve secrets from bws: bws secret get prod__api__HETZNER_API_TOKEN
+
+hetzner_api_token = "<from bws: prod__api__HETZNER_API_TOKEN>"
+
+# Confirmed Box A server type: cx33 (4 vCPU, 8GB RAM, 80GB disk)
+server_type = "cx33"
+
+# Box A is at fsn1 (Falkenstein, Germany). Use a DIFFERENT EU datacenter for geographic isolation.
+# Hetzner EU pricing is ~€7/mo. US datacenters (ash, hil) are ~30% more — avoid them.
+# Users are US-based but connect via Cloudflare, so box location does not affect their latency.
+# hel1 (Helsinki) = different country, strongest EU isolation, same price as fsn1.
+# nbg1 (Nuremberg) = different city/datacenter, slightly less separation, also fine.
+location = "hel1"
+
+# Your SSH public key for root access (already on Box A; generate new pair for Box B if desired)
+deploy_public_key = "<contents of ~/.ssh/id_ed25519.pub or similar>"
+
+# SSH public key for the ansible user (can be same as deploy key or a dedicated Ansible key)
+ansible_user_pubkey = "<contents of ~/.ssh/id_ed25519.pub or similar>"
+
+# Restrict to your IP in production, e.g. ["203.0.113.1/32"]
+# ssh_allowed_cidrs = ["0.0.0.0/0", "::/0"]

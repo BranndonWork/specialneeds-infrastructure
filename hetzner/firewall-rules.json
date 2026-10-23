@@ -1,0 +1,9 @@
+[
+  {
+    "direction": "in",
+    "protocol": "tcp",
+    "port": "22",
+    "source_ips": ["47.201.161.243/32"],
+    "description": "ssh from home"
+  }
+]
