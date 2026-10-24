@@ -3,7 +3,7 @@ services:
         image: cloudflare/cloudflared:2026.10.3
         container_name: cloudflare-tunnel
         restart: unless-stopped
-        command: tunnel --no-autoupdate run
+        command: tunnel --no-autoupdate --protocol http2 run
         env_file:
             - ./tunnel.token
         networks:
