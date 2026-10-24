@@ -251,10 +251,11 @@ describe('meilisearch-proxy', () => {
 					return JSON.stringify({ hits: [] });
 				});
 
-			await dispatch(makeSearchRequest(
+			const response = await dispatch(makeSearchRequest(
 				{ q: 'test' },
 				{ 'X-Status-Bypass': 'test-bypass-secret' },
 			));
+			expect(response.status).toBe(200);
 		});
 	});
 
@@ -294,16 +295,20 @@ describe('meilisearch-proxy', () => {
 			expect(SEARCH_ANALYTICS.writeDataPoint.mock.calls[0][0].blobs[3]).toBe('FL');
 		});
 
-		it('does not forward X-Visitor-Region to Meilisearch', async () => {
+		it.each([
+			['X-Visitor-Region', 'FL'],
+			['X-Search-Source', 'related-listings'],
+		])('does not forward %s to Meilisearch', async (name, value) => {
 			fetchMock
 				.get(env.MEILI_HOST)
 				.intercept({ method: 'POST', path: '/indexes/listings/search' })
 				.reply(200, (req) => {
-					expect(req.headers['x-visitor-region']).toBeUndefined();
+					expect(req.headers[name.toLowerCase()]).toBeUndefined();
 					return JSON.stringify({ hits: [], estimatedTotalHits: 1 });
 				});
 
-			await dispatch(makeSearchRequest({ q: 'camps' }, { 'X-Visitor-Region': 'FL' }), { SEARCH_ANALYTICS: fakeDataset() });
+			const response = await dispatch(makeSearchRequest({ q: 'camps' }, { [name]: value }), { SEARCH_ANALYTICS: fakeDataset() });
+			expect(response.status).toBe(200);
 		});
 
 		it('does not log an articles search', async () => {
@@ -316,6 +321,19 @@ describe('meilisearch-proxy', () => {
 				body: JSON.stringify({ q: 'autism' }),
 			}), { SEARCH_ANALYTICS });
 
+			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
+		});
+
+		it('does not log a search the caller marked with X-Search-Source', async () => {
+			replyWithHits();
+			const SEARCH_ANALYTICS = fakeDataset();
+
+			const response = await dispatch(
+				makeSearchRequest({ q: 'speech therapy' }, { 'X-Search-Source': 'related-listings' }),
+				{ SEARCH_ANALYTICS },
+			);
+
+			expect(response.status).toBe(200);
 			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
 		});
 

@@ -132,7 +132,7 @@ export default {
 				body = JSON.stringify(parsed);
 			}
 
-			// Forward request to Meilisearch (strip X-Status-Bypass — never forward to origin)
+			// Forward with only the auth and content-type headers; no caller header reaches the origin.
 			const meiliRequest = new Request(meiliUrl, {
 				method: 'POST',
 				headers: {
@@ -151,6 +151,7 @@ export default {
 			ctx.waitUntil(Promise.resolve().then(() => recordSearch(env.SEARCH_ANALYTICS, {
 				indexName,
 				statusBypassRequested: request.headers.has('X-Status-Bypass'),
+				searchSourceMarked: request.headers.has('X-Search-Source'),
 				responseOk: response.ok,
 				searchParams,
 				// A multi-search answer nests one result per query; the log reads the caller's own.
