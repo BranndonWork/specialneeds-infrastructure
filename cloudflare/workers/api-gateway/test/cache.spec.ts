@@ -19,6 +19,27 @@ async function read(url: string): Promise<Response | null> {
 	return res;
 }
 
+async function l1Entry(url: string): Promise<Response | undefined> {
+	return caches.default.match(new Request(`https://cache.internal/${await cacheKey(url)}`));
+}
+
+function expectOrigin(url: string, body: string, status = 200, cacheControl = 'public, max-age=3600'): void {
+	fetchMock
+		.get(env.ORIGIN_URL)
+		.intercept({ path: new URL(url).pathname })
+		.reply(status, body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': cacheControl } });
+}
+
+// The worker's GET path: a cache read, then the origin on a miss.
+async function readThroughCache(url: string): Promise<Response> {
+	const ctx = createExecutionContext();
+	const request = new Request(url);
+	const res = (await checkCache(request, env.CACHE_KV, ctx))
+		?? (await fetchAndCache(request, env.ORIGIN_URL, env.CACHE_KV, ctx, env.WORKER_ORIGIN_SECRET, null));
+	await waitOnExecutionContext(ctx);
+	return res;
+}
+
 describe('KV entries honour the max-age Django sent', () => {
 	it('serves an entry that is still inside its max-age', async () => {
 		const url = uniqueUrl('fresh');
@@ -160,10 +181,6 @@ describe('L1 holds an entry for at most 60 seconds regardless of the origin max-
 
 	const THIRTY_DAYS = 'public, max-age=2592000, stale-if-error=86400';
 
-	async function l1Entry(url: string): Promise<Response | undefined> {
-		return caches.default.match(new Request(`https://cache.internal/${await cacheKey(url)}`));
-	}
-
 	async function writeThroughOrigin(url: string): Promise<Response> {
 		fetchMock
 			.get('https://origin.test')
@@ -235,5 +252,141 @@ describe('L1 holds an entry for at most 60 seconds regardless of the origin max-
 		expect(res?.headers.get('X-Cache')).toBe('HIT');
 		expect(res?.headers.get('Cache-Control')).toBe(THIRTY_DAYS);
 		expect(res?.headers.get('X-Origin-Cache-Control')).toBeNull();
+	});
+});
+
+describe('cacheKey', () => {
+	it('is the same whatever order the query parameters arrive in', async () => {
+		expect(await cacheKey('https://api.test/api/v1/listings/?b=2&a=1')).toBe(await cacheKey('https://api.test/api/v1/listings/?a=1&b=2'));
+	});
+
+	it('ignores the fragment', async () => {
+		expect(await cacheKey('https://api.test/api/v1/listings/?a=1#top')).toBe(await cacheKey('https://api.test/api/v1/listings/?a=1'));
+	});
+
+	it('differs when a parameter value differs', async () => {
+		expect(await cacheKey('https://api.test/api/v1/listings/?page=1')).not.toBe(await cacheKey('https://api.test/api/v1/listings/?page=2'));
+	});
+
+	it('differs by path and by host', async () => {
+		const base = await cacheKey('https://api.test/api/v1/listings/');
+		expect(await cacheKey('https://api.test/api/v1/articles/')).not.toBe(base);
+		expect(await cacheKey('https://www.specialneeds.com/api/v1/listings/')).not.toBe(base);
+	});
+
+	it('is 64 lowercase hex characters', async () => {
+		expect(await cacheKey('https://api.test/api/v1/listings/')).toMatch(/^[0-9a-f]{64}$/);
+	});
+});
+
+describe('L1, KV and origin', () => {
+	beforeAll(() => {
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+	});
+	afterEach(() => fetchMock.assertNoPendingInterceptors());
+
+	it('fetches a miss from origin, then serves the next read from L1', async () => {
+		const url = uniqueUrl('l1');
+		expectOrigin(url, '{"v":"origin"}');
+
+		const first = await readThroughCache(url);
+		const second = await readThroughCache(url);
+
+		expect(first.headers.get('X-Cache')).toBe('MISS');
+		expect(second.headers.get('X-Cache')).toBe('HIT');
+		expect(await second.text()).toBe('{"v":"origin"}');
+	});
+
+	it('serves from KV when the L1 copy is gone', async () => {
+		const url = uniqueUrl('kv');
+		expectOrigin(url, '{"v":"origin"}');
+		await readThroughCache(url);
+		await caches.default.delete(new Request(`https://cache.internal/${await cacheKey(url)}`));
+
+		const res = await readThroughCache(url);
+
+		expect(res.headers.get('X-Cache')).toBe('KV-HIT');
+	});
+
+	// L1 is per PoP and a DELETE cannot reach every PoP, so an L1 copy counts only while KV holds the key.
+	it('evicts an L1 copy whose KV key is gone, and answers a miss', async () => {
+		const url = uniqueUrl('l1-orphan');
+		expectOrigin(url, '{"v":"first"}');
+		await readThroughCache(url);
+		expect(await l1Entry(url)).toBeDefined();
+		await env.CACHE_KV.delete(await cacheKey(url));
+
+		expect(await read(url)).toBeNull();
+		expect(await l1Entry(url)).toBeUndefined();
+	});
+
+	it('goes to origin once the KV key is gone, even with an L1 copy present', async () => {
+		const url = uniqueUrl('l1-orphan-refill');
+		expectOrigin(url, '{"v":"first"}');
+		await readThroughCache(url);
+		await env.CACHE_KV.delete(await cacheKey(url));
+		expectOrigin(url, '{"v":"second"}');
+
+		const res = await readThroughCache(url);
+
+		expect(res.headers.get('X-Cache')).toBe('MISS');
+		expect(await res.text()).toBe('{"v":"second"}');
+	});
+
+	it('writes a response the origin marks no-store to neither tier', async () => {
+		const url = uniqueUrl('no-store');
+		expectOrigin(url, '{"v":"private"}', 200, 'no-store');
+
+		await readThroughCache(url);
+
+		expect(await env.CACHE_KV.get(await cacheKey(url))).toBeNull();
+		expect(await l1Entry(url)).toBeUndefined();
+	});
+});
+
+describe('origin failures', () => {
+	beforeAll(() => {
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+	});
+	afterEach(() => fetchMock.assertNoPendingInterceptors());
+
+	const EXPIRED = {
+		contentType: 'application/json',
+		cacheControl: 'public, max-age=300',
+		storedAt: Date.now() - 600_000,
+		maxAge: 300,
+	};
+
+	it('serves the expired KV body when the origin is unreachable', async () => {
+		const url = uniqueUrl('stale');
+		await seedKv(url, '{"v":"stale"}', EXPIRED);
+		fetchMock.get(env.ORIGIN_URL).intercept({ path: new URL(url).pathname }).replyWithError(new Error('connection refused'));
+
+		const res = await readThroughCache(url);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('X-Cache')).toBe('STALE-ERROR');
+		expect(await res.text()).toBe('{"v":"stale"}');
+	});
+
+	it('answers 503 when the origin is unreachable and nothing is stored', async () => {
+		const url = uniqueUrl('no-stale');
+		fetchMock.get(env.ORIGIN_URL).intercept({ path: new URL(url).pathname }).replyWithError(new Error('connection refused'));
+
+		const res = await readThroughCache(url);
+
+		expect(res.status).toBe(503);
+	});
+
+	it('writes an origin 5xx to neither tier', async () => {
+		const url = uniqueUrl('5xx');
+		expectOrigin(url, '{"error":"boom"}', 502);
+
+		await readThroughCache(url);
+
+		expect(await env.CACHE_KV.get(await cacheKey(url))).toBeNull();
+		expect(await l1Entry(url)).toBeUndefined();
 	});
 });

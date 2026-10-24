@@ -2,6 +2,8 @@
 // The request is held until the slot comes up, then answers 200. Same service token as the KV
 // store, because the same server-side callers (the client's API routes) use both.
 
+import type { UpstreamSlot } from './upstream-slot';
+
 const PATH_PREFIX = '/v1/ratelimit/';
 
 function isAuthorized(request: Request, secret: string): boolean {
@@ -10,7 +12,7 @@ function isAuthorized(request: Request, secret: string): boolean {
 
 export async function handleRateLimitSlot(
   request: Request,
-  slots: DurableObjectNamespace,
+  slots: DurableObjectNamespace<UpstreamSlot>,
   serviceToken: string,
 ): Promise<Response | null> {
   const url = new URL(request.url);
