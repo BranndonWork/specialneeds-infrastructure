@@ -3,7 +3,7 @@
 # Restores coolify-db from an R2 backup, then restarts the Coolify stack.
 #
 # This restores Coolify's config DB (projects, apps, env vars, deploy history).
-# It does NOT restore application data — Postgres (Supabase) and Meilisearch
+# It does NOT restore application data — Postgres and Meilisearch
 # are restored via separate runbooks.
 #
 # Usage:
@@ -11,7 +11,7 @@
 #     -e backup_file=coolify-db-2026-04-19.sql.gz \
 #     -e bws_access_token=<from personal Bitwarden>
 #
-# See: docs/specialneeds-api/planned-work/disaster-recovery/runbook-coolify-restore.md
+# Runbook: special-needs repo, workbook/projects/specialneeds-api/disaster-recovery/runbooks.md, "Coolify restore"
 
 - name: Restore Coolify DB from R2 backup
   hosts: coolify_hosts
