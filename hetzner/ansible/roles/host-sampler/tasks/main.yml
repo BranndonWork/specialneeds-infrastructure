@@ -1,0 +1,37 @@
+---
+# Installs the host signal sampler as a systemd service. Thresholds and how to stop it: ../README.md
+
+- name: Create /opt/host-sampler
+  file:
+    path: /opt/host-sampler
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Install host_sampler.py
+  copy:
+    src: host_sampler.py
+    dest: /opt/host-sampler/host_sampler.py
+    mode: "0755"
+    owner: root
+    group: root
+  notify: restart host-sampler
+
+- name: Install host-sampler.service
+  copy:
+    src: host-sampler.service
+    dest: /etc/systemd/system/host-sampler.service
+    mode: "0644"
+    owner: root
+    group: root
+  notify: restart host-sampler
+
+- name: Enable and start host-sampler
+  systemd:
+    name: host-sampler
+    state: started
+    enabled: yes
+    daemon_reload: yes
+  # In check mode the unit file is never copied, so a first-install dry run cannot enable it.
+  when: not ansible_check_mode
