@@ -1,0 +1,23 @@
+[Unit]
+Description=Host signal sampler for the prod-triage stream (CPU, memory, disk)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/host-sampler/host_sampler.py
+Restart=always
+RestartSec=10
+Nice=10
+
+# Thresholds are whole numbers and match the laptop watcher's. After a change: systemctl restart host-sampler
+Environment=HOST_SAMPLER_OUTPUT=/var/log/prod-triage/stream.jsonl
+Environment=HOST_SAMPLER_INTERVAL_SECONDS=15
+Environment=HOST_SAMPLER_CPU_BUSY_PCT=85
+Environment=HOST_SAMPLER_CPU_SAMPLES=8
+Environment=HOST_SAMPLER_MEM_AVAILABLE_MB=400
+Environment=HOST_SAMPLER_MEM_SAMPLES=4
+Environment=HOST_SAMPLER_DISK_USED_PCT=85
+Environment=HOST_SAMPLER_DISK_PATH=/
+Environment=HOST_SAMPLER_REPEAT_MINUTES=1
+
+[Install]
+WantedBy=multi-user.target

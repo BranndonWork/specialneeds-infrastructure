@@ -1,0 +1,14 @@
+---
+# host-sampler.yml — Installs or updates the host signal sampler only.
+# Kept out of site.yml so a routine bring-up does not start it before the founder chooses to.
+#
+# Usage:
+#   Dry run:  ansible-playbook playbooks/host-sampler.yml --limit box-a --check
+#   Apply:    ansible-playbook playbooks/host-sampler.yml --limit box-a
+
+- name: Install the host signal sampler
+  hosts: coolify_hosts
+  become: true
+
+  roles:
+    - host-sampler
