@@ -1,0 +1,42 @@
+{
+  "primary_api": "http://10.100.0.3:8000/api/v1",
+  "primary_token_file": "/root/standby/coolify_a.token",
+  "standby_api": "http://localhost:8000/api/v1",
+  "standby_token_file": "/root/standby/coolify_b.token",
+  "telegram_env_file": "/root/standby/telegram.env",
+  "apps": [
+    {
+      "name": "django",
+      "primary_uuid": "y4gcswkooskoc44ggwokcgsw",
+      "standby_uuid": "fptpt3w5yarezseeixwinhd7",
+      "deploy_on_image_change": false,
+      "skip_keys": ["COMPOSE_PROFILES", "POSTGRES_LISTEN_IP"],
+      "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"],
+      "pin": {"SN_READ_ONLY": "1"}
+    },
+    {
+      "name": "postgres",
+      "primary_uuid": "7am8hsrbbn0okss6mtb7lqpk",
+      "standby_uuid": "16ofcqlg8eiajbyek49d7ipc",
+      "skip_keys": ["POSTGRES_LISTEN_IP"],
+      "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"]
+    },
+    {
+      "name": "redis",
+      "primary_uuid": "o7ikiovnpnt9psnzznubo666",
+      "standby_uuid": "mraqoybgpqjuol70bdwraiku",
+      "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"]
+    },
+    {
+      "name": "meilisearch",
+      "primary_uuid": "rmrho2eqjylh9ct5ddunm8t3",
+      "standby_uuid": "3zzgdp7y0re7mgdjledkipkm",
+      "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"],
+      "pin": {
+        "MEILI_IMPORT_SNAPSHOT": "/meili_data/snapshots/data.ms.snapshot",
+        "MEILI_IGNORE_MISSING_SNAPSHOT": "true",
+        "MEILI_IGNORE_SNAPSHOT_IF_DB_EXISTS": "true"
+      }
+    }
+  ]
+}

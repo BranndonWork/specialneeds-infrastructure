@@ -1,0 +1,16 @@
+---
+# Base install for the warm standby (box-b): hardened ssh, Docker with the shared
+# sn-services-net network, and Coolify with its root user seeded from variables.
+#
+#   cd hetzner/ansible
+#   ansible-playbook playbooks/standby-base.yml \
+#     -e coolify_root_username=founder -e coolify_root_email=<email> \
+#     -e coolify_root_password='{{ lookup("env", "COOLIFY_ROOT_PASSWORD") }}'
+#
+# The playbook is idempotent. The Coolify installer only runs when /data/coolify is absent.
+- name: Warm standby base install
+  hosts: box-b
+  roles:
+    - { role: ssh-hardening, tags: [base] }
+    - { role: docker, tags: [base] }
+    - { role: coolify, tags: [coolify] }

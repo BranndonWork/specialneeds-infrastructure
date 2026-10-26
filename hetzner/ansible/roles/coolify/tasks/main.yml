@@ -4,6 +4,10 @@
     path: /data/coolify
   register: coolify_data_dir
 
+# With the three coolify_root_* vars set, the installer seeds the root user and the
+# registration screen never appears. Pass the password from the environment with
+# -e coolify_root_password='{{ lookup("env", "COOLIFY_ROOT_PASSWORD") }}' so it never
+# sits in a file or a shell history.
 - name: Run Coolify installer
   shell: curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash -s {{ coolify_version | quote }}
   # Auto-update would move the box off the pinned version before a coolify-db restore lands.
@@ -11,6 +15,11 @@
     AUTOUPDATE: "false"
   args:
     creates: /data/coolify
+  environment:
+    ROOT_USERNAME: "{{ coolify_root_username | default(omit) }}"
+    ROOT_USER_EMAIL: "{{ coolify_root_email | default(omit) }}"
+    ROOT_USER_PASSWORD: "{{ coolify_root_password | default(omit) }}"
+  no_log: true
   when: not coolify_data_dir.stat.exists
 
 - name: Wait for Coolify API to respond (up to 5 minutes)

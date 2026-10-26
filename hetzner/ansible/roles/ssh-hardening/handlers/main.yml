@@ -1,5 +1,6 @@
 ---
 - name: restart sshd
   service:
-    name: sshd
+    # Ubuntu's unit is ssh.service on 22.04 and 24.04; the sshd alias is gone on 24.04.
+    name: ssh
     state: restarted
