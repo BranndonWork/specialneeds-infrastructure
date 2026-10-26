@@ -14,8 +14,15 @@
 		"enabled": true
 	},
 	"vars": {
-		"MEILI_HOST": "https://search-origin.specialneeds.com"
+		"MEILI_HOST": "https://search-origin.specialneeds.com",
+		"MEILI_STANDBY_HOST": "https://search-standby.specialneeds.com"
 	},
+	"kv_namespaces": [
+		{
+			"binding": "FAILOVER_KV",
+			"id": "c54f603f29f24d50b7b39ad5aa7e4ae8"
+		}
+	],
 	"analytics_engine_datasets": [
 		{
 			"binding": "SEARCH_ANALYTICS",

@@ -7,7 +7,7 @@ const REVALIDATE_URL = 'https://www.specialneeds.com/api/admin/revalidate/';
 const CF_PROXIED_HOST = 'api.specialneeds.com';
 const FRONTEND_HOST = 'www.specialneeds.com';
 
-function isAuthorized(request: Request, secret: string): boolean {
+export function isAuthorized(request: Request, secret: string): boolean {
   return Boolean(secret && request.headers.get('X-Sn-Service-Token') === secret);
 }
 

@@ -41,6 +41,16 @@
 		{
 			"binding": "CROWDSEC_KV",
 			"id": "dafa03953730440d90e18de7505241a0"
+		},
+		{
+			"binding": "FAILOVER_KV",
+			"id": "c54f603f29f24d50b7b39ad5aa7e4ae8"
 		}
 	],
+	"vars": {
+		"STANDBY_ORIGIN_URL": "https://api-standby.specialneeds.com"
+	},
+	"triggers": {
+		"crons": ["* * * * *"]
+	},
 }

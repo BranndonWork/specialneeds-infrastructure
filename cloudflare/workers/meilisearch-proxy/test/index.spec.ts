@@ -1,6 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext, fetchMock } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import worker from '../src';
+import { invalidateFailoverCache } from '../src/failover-state';
 
 const BASE = 'http://example.com';
 
@@ -385,6 +386,74 @@ describe('meilisearch-proxy', () => {
 
 			expect(response.status).toBe(503);
 			expect(SEARCH_ANALYTICS.writeDataPoint).not.toHaveBeenCalled();
+		});
+	});
+
+	// The api-gateway's probe owns failover:state in the shared FAILOVER_KV; this Worker only
+	// reads it and follows the gateway onto the standby box.
+	describe('standby failover', () => {
+		async function seedFailover(active: boolean): Promise<void> {
+			await env.FAILOVER_KV!.put('failover:state', JSON.stringify({ active, pinned: false }));
+			invalidateFailoverCache();
+		}
+
+		function expectSearchAt(host: string): void {
+			fetchMock
+				.get(host)
+				.intercept({ method: 'POST', path: '/indexes/listings/search' })
+				.reply(200, JSON.stringify({ hits: [] }));
+		}
+
+		it('searches the standby host and labels the response when failover is active', async () => {
+			await seedFailover(true);
+			expectSearchAt(env.MEILI_STANDBY_HOST);
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }));
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('x-sn-origin')).toBe('standby');
+		});
+
+		it('searches the primary host and labels the response when failover is off', async () => {
+			await seedFailover(false);
+			expectSearchAt(env.MEILI_HOST);
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }));
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('x-sn-origin')).toBe('primary');
+		});
+
+		it('searches the primary when no state has ever been written', async () => {
+			await env.FAILOVER_KV!.delete('failover:state');
+			invalidateFailoverCache();
+			expectSearchAt(env.MEILI_HOST);
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }));
+
+			expect(response.headers.get('x-sn-origin')).toBe('primary');
+		});
+
+		it('searches the primary when the KV binding is absent', async () => {
+			invalidateFailoverCache();
+			expectSearchAt(env.MEILI_HOST);
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }), { FAILOVER_KV: undefined });
+
+			expect(response.headers.get('x-sn-origin')).toBe('primary');
+		});
+
+		it('keeps the cached decision for the cache window instead of re-reading KV', async () => {
+			await seedFailover(false);
+			expectSearchAt(env.MEILI_HOST);
+			await dispatch(makeSearchRequest({ q: 'autism' }));
+
+			await env.FAILOVER_KV!.put('failover:state', JSON.stringify({ active: true }));
+			expectSearchAt(env.MEILI_HOST);
+
+			const response = await dispatch(makeSearchRequest({ q: 'autism' }));
+
+			expect(response.headers.get('x-sn-origin')).toBe('primary');
 		});
 	});
 });
