@@ -9,6 +9,7 @@ export default defineWorkersConfig({
 					bindings: {
 						MEILI_SEARCH_KEY: 'test-search-key',
 						MEILISEARCH_STATUS_BYPASS_KEY: 'test-bypass-secret',
+						MEILI_STANDBY_HOST: 'https://search-standby.test',
 					},
 				},
 			},

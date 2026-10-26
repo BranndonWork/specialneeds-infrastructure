@@ -3,9 +3,12 @@
  */
 
 import { recordSearch, type SearchParams } from './search-log';
+import { isFailoverActive } from './failover-state';
 
 interface Env {
 	MEILI_HOST: string;
+	MEILI_STANDBY_HOST: string;
+	FAILOVER_KV?: KVNamespace;
 	MEILI_SEARCH_KEY: string;
 	MEILISEARCH_STATUS_BYPASS_KEY: string;
 	SEARCH_ANALYTICS?: AnalyticsEngineDataset;
@@ -94,8 +97,14 @@ export default {
 		}
 
 		try {
+			// While the api-gateway's probe says the primary is down, search follows it onto the
+			// standby box. Searches are reads, so nothing is paused here.
+			const failoverActive = await isFailoverActive(env.FAILOVER_KV);
+			const meiliHost = failoverActive ? env.MEILI_STANDBY_HOST : env.MEILI_HOST;
+			const servedBy = failoverActive ? 'standby' : 'primary';
+
 			// Querystring is dropped: POST search reads parameters from the body only
-			const meiliUrl = `${env.MEILI_HOST}${url.pathname}`;
+			const meiliUrl = `${meiliHost}${url.pathname}`;
 
 			// Inject status = published filter into public search requests.
 			// Requests from the Next.js server-side proxy that include the bypass
@@ -167,6 +176,7 @@ export default {
 					'Content-Type': 'application/json',
 					// Cache successful searches for 5 minutes
 					'Cache-Control': response.ok ? 'public, max-age=300' : 'no-cache',
+					'x-sn-origin': servedBy,
 				},
 			});
 

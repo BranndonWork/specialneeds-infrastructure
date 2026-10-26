@@ -7,12 +7,15 @@ import { resolveIdentity, stripIdentityHeaders, RENDER_IDENTITY } from './identi
 import { forwardVisitorIp, toOriginUrl } from './origin';
 import { requiresVerifiedIdentity } from './send-paths';
 import { isScannerBlockCandidate, isScannerBlocked, recordNotFound } from './scanner-block';
+import { getFailoverState, handleFailoverEndpoint, isReadMethod, runProbe } from './failover';
 
 export interface Env {
   ORIGIN_URL: string;
+  STANDBY_ORIGIN_URL: string;
   RATE_LIMIT_KV: KVNamespace;
   CACHE_KV: KVNamespace;
   CROWDSEC_KV: KVNamespace;
+  FAILOVER_KV: KVNamespace;
   UPSTREAM_SLOT: DurableObjectNamespace;
   CACHE_MGMT_TOKEN: string;
   WORKER_ORIGIN_SECRET: string;
@@ -21,6 +24,8 @@ export interface Env {
   SN_SERVICE_TOKEN: string;
   IDENTITY_SIGNING_SECRET: string;
   IDENTITY_SIGNING_SECRET_PREVIOUS?: string;
+  TELEGRAM_ALERTS_BOT_TOKEN?: string;
+  TELEGRAM_ALERTS_CHAT_ID?: string;
 }
 
 async function proxyToOrigin(request: Request, originUrl: string, originSecret: string, visitorIp: string | null): Promise<Response> {
@@ -94,6 +99,14 @@ export default {
       return new Response(kvResponse.body, { status: kvResponse.status, statusText: kvResponse.statusText, headers });
     }
 
+    const failoverResponse = await handleFailoverEndpoint(request, env);
+    if (failoverResponse) {
+      console.log(`[failover-endpoint] ${failoverResponse.status} ${Date.now() - start}ms`);
+      const headers = new Headers(failoverResponse.headers);
+      headers.set('X-Worker-Response-Time', `${Date.now() - start}ms`);
+      return new Response(failoverResponse.body, { status: failoverResponse.status, headers });
+    }
+
     if (requiresVerifiedIdentity(method, pathname) && !identity.verified) {
       console.log(`[identity-gate] rejected ${method} ${pathname} identity=${identity.value}`);
       return new Response(JSON.stringify({ error: 'Forbidden' }), {
@@ -117,6 +130,19 @@ export default {
     console.log(`[rate-limit] limited=${rlResult.limited} ${Date.now() - t2}ms`);
     if (rlResult.limited) return rateLimitResponse(rlResult.retryAfter!);
 
+    // The standby is read-only, so while it serves, anything that would write is paused rather
+    // than sent to a box that cannot take it.
+    const failover = await getFailoverState(env.FAILOVER_KV);
+    const originUrl = failover.active ? env.STANDBY_ORIGIN_URL : env.ORIGIN_URL;
+    const servedBy = failover.active ? 'standby' : 'primary';
+    if (failover.active && !isReadMethod(method)) {
+      console.log(`[failover] read-only, rejected ${method} ${pathname}`);
+      return new Response(JSON.stringify({ error: 'read-only', detail: 'primary unavailable, writes are paused' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '300', 'X-Worker-Response-Time': `${Date.now() - start}ms` },
+      });
+    }
+
     let response: Response;
 
     const bypassCache = request.headers.has('authorization');
@@ -129,12 +155,12 @@ export default {
         response = cached;
       } else {
         const t4 = Date.now();
-        response = await fetchAndCache(request, env.ORIGIN_URL, env.CACHE_KV, ctx, env.WORKER_ORIGIN_SECRET, visitorIp);
+        response = await fetchAndCache(request, originUrl, env.CACHE_KV, ctx, env.WORKER_ORIGIN_SECRET, visitorIp);
         console.log(`[origin-fetch] status=${response.status} ${Date.now() - t4}ms`);
       }
     } else {
       const t4 = Date.now();
-      response = await proxyToOrigin(request, env.ORIGIN_URL, env.WORKER_ORIGIN_SECRET, visitorIp);
+      response = await proxyToOrigin(request, originUrl, env.WORKER_ORIGIN_SECRET, visitorIp);
       console.log(`[origin-proxy] status=${response.status} ${Date.now() - t4}ms`);
     }
 
@@ -144,13 +170,18 @@ export default {
       console.log(`[total] error=${response.status} ${Date.now() - start}ms`);
       return new Response(JSON.stringify({ error: 'Service unavailable' }), {
         status: response.status,
-        headers: { 'Content-Type': 'application/json', 'X-Worker-Response-Time': `${Date.now() - start}ms` },
+        headers: { 'Content-Type': 'application/json', 'X-Worker-Response-Time': `${Date.now() - start}ms`, 'x-sn-origin': servedBy },
       });
     }
 
     console.log(`[total] status=${response.status} ${Date.now() - start}ms`);
     const headers = new Headers(response.headers);
     headers.set('X-Worker-Response-Time', `${Date.now() - start}ms`);
+    headers.set('x-sn-origin', servedBy);
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await runProbe(env);
   },
 };
