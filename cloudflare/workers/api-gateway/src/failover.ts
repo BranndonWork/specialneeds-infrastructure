@@ -1,14 +1,16 @@
 import type { Env } from './index';
 import { isAuthorized } from './kv-endpoint';
 
-// Primary/standby failover. A cron probe decides whether the gateway reads from the primary
-// Django or the read-only warm standby, and `fetch` reads that decision once per isolate every
-// 30 seconds. Writes are paused while the standby serves: it cannot take them.
+// Primary/standby failover. A cron probe every two minutes decides whether the gateway reads from
+// the primary Django or the read-only warm standby, and `fetch` reads that decision once per
+// isolate every 30 seconds. Writes are paused while the standby serves: it cannot take them.
+// KV is eventually consistent (about 60 s), so the probe runs slower than that and skips a cycle
+// whenever the state changed under it.
 
 export const FAILOVER_STATE_KEY = 'failover:state';
 export const FAIL_THRESHOLD = 3;
-export const RECOVER_THRESHOLD = 10;
-export const STANDBY_FAIL_THRESHOLD = 10;
+export const RECOVER_THRESHOLD = 5;
+export const STANDBY_FAIL_THRESHOLD = 5;
 export const MANAGEMENT_PATH = '/__failover';
 const PROBE_TIMEOUT_MS = 10_000;
 const STATE_CACHE_MS = 30_000;
@@ -109,6 +111,7 @@ export async function sendTelegram(env: AlertEnv, text: string): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(5_000),
     });
     console.log(`[failover:telegram] status=${res.status}`);
   } catch (err) {
@@ -118,15 +121,21 @@ export async function sendTelegram(env: AlertEnv, text: string): Promise<void> {
 
 // --- KV state ---
 
-export async function readState(kv: KVNamespace): Promise<FailoverState> {
+// Null means the read itself failed, as opposed to no state stored yet.
+export async function readStoredState(kv: KVNamespace): Promise<FailoverState | null> {
   try {
     const raw = await kv.get(FAILOVER_STATE_KEY);
     if (!raw) return initialState();
     return { ...initialState(), ...JSON.parse(raw) };
   } catch (err) {
-    console.log(`[failover] state read error, assuming primary: ${err}`);
-    return initialState();
+    console.log(`[failover] state read error: ${err}`);
+    return null;
   }
+}
+
+// Request path: a failed read serves from the primary, so a KV outage never strands traffic.
+export async function readState(kv: KVNamespace): Promise<FailoverState> {
+  return (await readStoredState(kv)) ?? initialState();
 }
 
 async function writeState(kv: KVNamespace, state: FailoverState): Promise<void> {
@@ -161,8 +170,14 @@ async function probe(baseUrl: string, originSecret: string): Promise<boolean> {
   }
 }
 
-export async function runProbe(env: Env): Promise<FailoverState> {
-  const stored = await readState(env.FAILOVER_KV);
+// A KV read failure or a state change during the probes (a manual POST, an overlapping probe)
+// skips this cycle rather than writing over it. The next cycle starts from the fresh state.
+export async function runProbe(env: Env): Promise<FailoverState | null> {
+  const stored = await readStoredState(env.FAILOVER_KV);
+  if (!stored) {
+    console.log('[failover:probe] skipped, state unreadable');
+    return null;
+  }
   const [primaryOk, standbyOk] = await Promise.all([
     probe(env.ORIGIN_URL, env.WORKER_ORIGIN_SECRET),
     probe(env.STANDBY_ORIGIN_URL, env.WORKER_ORIGIN_SECRET),
@@ -173,7 +188,14 @@ export async function runProbe(env: Env): Promise<FailoverState> {
   const next = standby.state;
   console.log(`[failover:probe] primary=${primaryOk ? 'ok' : 'fail'} standby=${standbyOk ? 'ok' : 'fail'} active=${next.active} pinned=${next.pinned} fails=${next.fails} passes=${next.passes} standby_fails=${next.standby_fails}`);
 
-  if (JSON.stringify(next) !== JSON.stringify(stored)) await writeState(env.FAILOVER_KV, next);
+  if (JSON.stringify(next) === JSON.stringify(stored)) return next;
+
+  const latest = await readStoredState(env.FAILOVER_KV);
+  if (!latest || JSON.stringify(latest) !== JSON.stringify(stored)) {
+    console.log('[failover:probe] skipped write, state changed during probe');
+    return latest;
+  }
+  await writeState(env.FAILOVER_KV, next);
 
   if (primary.flipped) {
     const cause = next.active ? `primary ${FAIL_THRESHOLD} failed probes` : `primary ${RECOVER_THRESHOLD} passed probes`;

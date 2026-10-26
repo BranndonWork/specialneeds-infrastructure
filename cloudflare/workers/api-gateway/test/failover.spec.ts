@@ -220,6 +220,37 @@ describe('runProbe against the origins', () => {
 		expect(sent).toBe('api-gateway: failover ON, serving read-only from standby (primary 3 failed probes)');
 	});
 
+	it('skips its write and its alert when the state changed during the probes', async () => {
+		await seedState({ fails: FAIL_THRESHOLD - 1 });
+		expectHealth('https://origin.test', 500);
+		expectHealth('https://standby.test', 200);
+		const manualPin = JSON.stringify({ ...initialState(), pinned: true, reason: 'manual' });
+		let reads = 0;
+		const racingKv = {
+			get: async (key: string) => (++reads === 2 ? manualPin : env.FAILOVER_KV.get(key)),
+			put: (key: string, value: string) => env.FAILOVER_KV.put(key, value),
+		} as unknown as KVNamespace;
+
+		const result = await runProbe({ ...env, FAILOVER_KV: racingKv });
+
+		expect(result?.pinned).toBe(true);
+		const stored = await storedState();
+		expect(stored.active).toBe(false);
+		expect(stored.fails).toBe(FAIL_THRESHOLD - 1);
+	});
+
+	it('skips the cycle when the state cannot be read', async () => {
+		const brokenKv = {
+			get: async () => { throw new Error('kv unavailable'); },
+			put: (key: string, value: string) => env.FAILOVER_KV.put(key, value),
+		} as unknown as KVNamespace;
+
+		const result = await runProbe({ ...env, FAILOVER_KV: brokenKv });
+
+		expect(result).toBeNull();
+		expect((await storedState()).fails).toBe(0);
+	});
+
 	it('flips off at the tenth pass and tells Telegram', async () => {
 		await seedState({ active: true, passes: RECOVER_THRESHOLD - 1, reason: 'primary unhealthy' });
 		expectHealth('https://origin.test', 200);
@@ -230,7 +261,7 @@ describe('runProbe against the origins', () => {
 		await runProbe(env);
 
 		expect((await storedState()).active).toBe(false);
-		expect(sent).toBe('api-gateway: failover OFF, back on primary (primary 10 passed probes)');
+		expect(sent).toBe(`api-gateway: failover OFF, back on primary (primary ${RECOVER_THRESHOLD} passed probes)`);
 	});
 
 	it('alerts once when the standby has failed ten probes', async () => {

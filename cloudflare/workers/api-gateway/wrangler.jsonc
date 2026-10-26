@@ -51,6 +51,6 @@
 		"STANDBY_ORIGIN_URL": "https://api-standby.specialneeds.com"
 	},
 	"triggers": {
-		"crons": ["* * * * *"]
+		"crons": ["*/2 * * * *"]
 	},
 }
