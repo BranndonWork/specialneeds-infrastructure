@@ -9,7 +9,7 @@
       "name": "django",
       "primary_uuid": "y4gcswkooskoc44ggwokcgsw",
       "standby_uuid": "fptpt3w5yarezseeixwinhd7",
-      "deploy_on_image_change": false,
+      "deploy_on_image_change": true,
       "skip_keys": ["COMPOSE_PROFILES", "POSTGRES_LISTEN_IP"],
       "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"],
       "pin": {"SN_READ_ONLY": "1"}
