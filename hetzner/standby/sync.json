@@ -31,12 +31,7 @@
       "name": "meilisearch",
       "primary_uuid": "rmrho2eqjylh9ct5ddunm8t3",
       "standby_uuid": "3zzgdp7y0re7mgdjledkipkm",
-      "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"],
-      "pin": {
-        "MEILI_IMPORT_SNAPSHOT": "/meili_data/snapshots/data.ms.snapshot",
-        "MEILI_IGNORE_MISSING_SNAPSHOT": "true",
-        "MEILI_IGNORE_SNAPSHOT_IF_DB_EXISTS": "true"
-      }
+      "skip_prefixes": ["SERVICE_FQDN_", "SERVICE_URL_"]
     }
   ]
 }
