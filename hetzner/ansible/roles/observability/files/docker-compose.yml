@@ -48,6 +48,30 @@ services:
     networks:
       - observability-network
 
+  # Host, container and Celery queue readings as JSON lines; Vector ships them to the
+  # prod_metrics stream. Read-only Docker socket, Redis LLEN only.
+  metrics:
+    image: python:3.12-alpine
+    container_name: sn-metrics
+    restart: unless-stopped
+    command: ["python", "-u", "/app/prod_metrics.py"]
+    environment:
+      - REDIS_HOST=sn-redis
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/prod_metrics.py:/app/prod_metrics.py:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    networks:
+      - sn-services-net
+
 networks:
   observability-network:
     driver: bridge

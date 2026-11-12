@@ -1,8 +1,25 @@
 sources:
   docker_logs:
     type: docker_logs
+    exclude_containers:
+      - sn-metrics
+  prod_metrics_lines:
+    type: docker_logs
+    include_containers:
+      - sn-metrics
 
 transforms:
+  parse_metrics:
+    type: remap
+    inputs:
+      - prod_metrics_lines
+    drop_on_abort: true
+    source: |
+      parsed, err = parse_json(string!(.message))
+      if err != null || !is_object(parsed) { abort }
+      . = parsed
+
+
   parse_level:
     type: remap
     inputs:
@@ -20,6 +37,20 @@ sinks:
     inputs:
       - parse_level
     uri: "http://openobserve:5080/api/default/specialneeds/_json"
+    method: post
+    auth:
+      strategy: basic
+      user: "${OPENOBSERVE_EMAIL}"
+      password: "${OPENOBSERVE_PASSWORD}"
+    encoding:
+      codec: json
+    batch:
+      timeout_secs: 5
+  openobserve_metrics:
+    type: http
+    inputs:
+      - parse_metrics
+    uri: "http://openobserve:5080/api/default/prod_metrics/_json"
     method: post
     auth:
       strategy: basic

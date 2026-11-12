@@ -50,6 +50,21 @@
     dest: /opt/observability/observability/vector.yaml
     mode: "0644"
 
+- name: Deploy the production metrics script
+  copy:
+    src: prod_metrics.py
+    dest: /opt/observability/observability/prod_metrics.py
+    mode: "0644"
+
+# OpenObserve's search API for business-api, through the Cloudflare tunnel. Cloudflare
+# Access (business-api service token only) and a WAF rule allowing only
+# POST /api/default/_search guard the hostname; see terraform/scripts/cloudflare_access.py.
+- name: Route openobserve.specialneeds.com through Traefik
+  copy:
+    src: traefik-openobserve.yaml
+    dest: /data/coolify/proxy/dynamic/openobserve.yaml
+    mode: "0644"
+
 - name: Start observability stack
   community.docker.docker_compose_v2:
     project_src: /opt/observability

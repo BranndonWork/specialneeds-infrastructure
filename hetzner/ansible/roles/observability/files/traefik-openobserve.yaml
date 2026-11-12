@@ -1,0 +1,14 @@
+# OpenObserve for business-api, reached through the Cloudflare tunnel (cloudflared ->
+# coolify-proxy:80). Cloudflare Access and the WAF guard the hostname before it gets here.
+http:
+  routers:
+    openobserve-tunnel:
+      entryPoints:
+        - http
+      service: openobserve
+      rule: Host(`openobserve.specialneeds.com`)
+  services:
+    openobserve:
+      loadBalancer:
+        servers:
+          - url: 'http://sn-openobserve:5080'
